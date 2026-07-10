@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Optional
 
-from .constants import MODE_HARESKIP, MODE_TEACACHE, HARESKIP_MODES
+from .constants import MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL, HARESKIP_MODES
 
 
 MODE_OFF = ""
@@ -277,6 +277,12 @@ class RuntimeState:
     hareskip_zone_high: float = 0.0
     hareskip_probability_model: str = "sigmoid_band_v0.1"
     hareskip_image_seed: Optional[int] = None
+    # Manual Skip mode: raw comma-separated step text from the UI, and the
+    # validated 1-based step list parsed from it at generation start (set in
+    # before_process after validate_manual_steps succeeds; None until then and
+    # between generations). The patcher reads the parsed list, not the raw text.
+    manual_skip_steps: str = ""
+    manual_skip_parsed: Optional[list] = None
     # Per-step flow-time (t_now) schedule captured for this generation.
     hareskip_schedule_t_now: Optional[list] = None
     # The generated SkipPattern for this generation (skip_pattern.SkipPattern).
@@ -399,6 +405,7 @@ class RuntimeState:
         hareskip_window_end: float = 0.95,
         hareskip_zone_low: float = -4.0,
         hareskip_zone_high: float = 0.0,
+        manual_skip_steps: str = "",
     ) -> None:
         self.enabled = bool(enabled)
         self.debug_log_enabled = bool(debug_log_enabled)
@@ -475,6 +482,9 @@ class RuntimeState:
         self.hareskip_zone_low, self.hareskip_zone_high = _normalize_range(
             hareskip_zone_low, hareskip_zone_high, -8.0, 8.0, -4.0, 0.0
         )
+        # Manual Skip: keep the raw text (stripped); validation/parsing happens
+        # later in before_process against p.steps.
+        self.manual_skip_steps = str(manual_skip_steps or "").strip()
 
     def active(self) -> bool:
         return (
@@ -520,6 +530,7 @@ class RuntimeState:
         self.hareskip_schedule_t_now = None
         self.hareskip_pattern = None
         self.hareskip_schedule_warned = False
+        self.manual_skip_parsed = None
         self.tensor_dump_run_dir = None
         self.tensor_dump_initialized = False
         self.tensor_dump_records = 0

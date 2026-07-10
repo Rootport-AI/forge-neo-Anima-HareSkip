@@ -1,8 +1,8 @@
 # Manual Skip mode 設計仕様書
 
 - 設計確定: 2026-07-10
-- 実装ステータス: 未実装（実装はユーザーのゴーサイン待ち）
-- HEAD コミット: `03e0acc0d3cd12889c11bd34612558630956d69e`
+- 実装ステータス: 実装済み（2026-07-10）
+- 設計確定時 HEAD コミット: `03e0acc0d3cd12889c11bd34612558630956d69e`
 - 対象: HareSkip 拡張への追加モード「Manual Skip」（`hareskip/manual_skip.py` 新設予定）
 - 関連文書: [`docs/SPEC-alpha.md`](SPEC-alpha.md)（現行 α版仕様。UI構造・引数同期・infotext方式の正典）、[`docs/HANDOFF-next-session.md`](HANDOFF-next-session.md) §4.5（本機能が奉仕する再キャリブレーション実験計画）
 
@@ -73,6 +73,8 @@ Manual Skip モード専用の infotext キーは最小限の2つのみとする
 | `Manual skipped_steps` | 実現値。1始まりのステップ番号をスペース区切りで列挙。既存の `Hare skipped_steps`（`hareskip/script.py` `_apply_hare_pattern_infotext`: `" ".join(str(step) for step in pattern.skipped_steps)`）と同じ書き込み方式。 |
 
 実験名・threshold・ユーザー指定値そのものの別記録は付与しない。指定値と実現値のズレは、原理的に step 1 の指定がエラーで排除されている（§4-3）ため、`first_call` 強制フル以外では発生しない。したがって実現値（`Manual skipped_steps`）のみで実験記録として十分と判断する。
+
+実装上の実現値の出所（realized-vs-specified の裁定）: `Manual skipped_steps` はユーザー指定リストではなく **実現値** を報告する。具体的には patcher のスキップ分岐が per-step に積む実スキップ記録（`STATE.hareskip_skipped_steps`、0始まりで格納）を1始まりへ変換・昇順化して書き込む。これは HareSkip モードで pattern 由来の値を書く箇所と同じ postprocess_image フックだが、Manual Skip には pattern オブジェクトが存在しないため、実スキップ記録を直接参照する方式を採る。共有強制フル（`first_call`/`missing_residual`）が指定スキップを上書きした稀なケースでも、実際に飛ばしたステップのみが記録されるため真正である（§4-3 で step 1 を弾いているため実務上このズレはほぼ発生しない）。
 
 ---
 

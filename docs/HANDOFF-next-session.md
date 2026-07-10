@@ -69,7 +69,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 5. **offset 変更で別 pattern**: offset を変えると別 `skipped_steps` になるか（同一 image seed のまま引き直し）。
 6. **TeaCache モードが旧 UjiCache と同一挙動**: TeaCache モードに切替え、同条件で旧 UjiCache とビット同一の skip 挙動・画質か。
 7. **PNG infotext**: 保存画像メタデータに `Hare skipped_steps` / `Hare skip_count` / `Hare skip_seed` / `Hare skip_window` / `Hare zone_boundaries` / `Hare params` 等が入るか（`postprocess_image` 書き込み）。
-8. **RangeSlider レンダリング**: HareSkip グループに dual-thumb の「Skip window (progress)」（`hare-skip-window`）と「Zone boundaries (logSNR proxy)」（`hare-zone-boundaries`）が表示され、両端つまみで値を動かすと `Hare skip_window` / `Hare zone_boundaries` infotext に反映されるか（RangeSlider → 隠し `gr.Number` ミラー → `apply_options` の経路）。Forge neo core は `gradio_rangeslider==0.0.8` を同梱するため通常この経路で描画される。フォールバック（RangeSlider 不在時のプレーン Slider 4 本）は**わざわざ検証用にアンインストールする必要は無い**——両経路はコードに実装済みで、引数数は 33 で不変（`tests/test_arg_sync.py` が静的に保証）。RangeSlider 版の window / zones を動かしたとき infotext が変化すれば配線は正しい。
+8. **RangeSlider レンダリング**: HareSkip グループに dual-thumb の「Skip window (progress)」（`hare-skip-window`）と「Zone boundaries (logSNR proxy)」（`hare-zone-boundaries`）が表示され、両端つまみで値を動かすと `Hare skip_window` / `Hare zone_boundaries` infotext に反映されるか（RangeSlider → 隠し `gr.Number` ミラー → `apply_options` の経路）。Forge neo core は `gradio_rangeslider==0.0.8` を同梱するため通常この経路で描画される。フォールバック（RangeSlider 不在時のプレーン Slider 4 本）は**わざわざ検証用にアンインストールする必要は無い**——両経路はコードに実装済みで、引数数は 34 で不変（`tests/test_arg_sync.py` が静的に保証）。RangeSlider 版の window / zones を動かしたとき infotext が変化すれば配線は正しい。
+9. **Manual Skip mode 動作確認**: Skip mode Radio を「Manual Skip」に切替え、「Manual skip steps」テキストボックスに例えば `10, 12` を指定して生成。(a) `hareskip_call=` ログの当該ステップ（step=9 と step=11、0始まり）で `decision=fallback`/`prediction`・`reason=manual` が出て、他ステップは `decision=full` であること。(b) PNG/infotext の `Manual skipped_steps` に実現値 `10 12` が入ること。(c) 範囲外（`p.steps` 超）・`1` の指定・非数値（`abc` 等）が **生成前に** `Manual Skip error:` で止まること（フル演算にフォールバックせずエラー中止）。(d) 空欄指定で全ステップフル演算（baseline）になること。sigma スケジュール捕捉が失敗する環境でも Manual Skip は独立動作するため、HareSkip モード不動作の切り分け診断にも使える。
 
 ---
 
@@ -91,6 +92,10 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 - 対抗仮説（ユーザー提案）: バンド型ではなく**単調飽和型**。「軌道座標に沿って確率が上がり、収束帯（DiT/flow matching の直線軌道が収束した後）では max skip streak の強制フル演算以外ほぼ全て飛ばす」。将来 `monotone_saturate_v0.1` としてレジストリ登録し `sigmoid_band` と A/B 比較する。
 - DiT 性質の理解（妥当と確認、留保2点）: flow matching 系は直線輸送経路が訓練目標で終盤の速度変化は小さい（SDXL/DDIM の「収束後に絵柄が変わる」現象は起きにくい）。留保①収束≠凍結——高周波ディテールは動き続け、そこは LPIPS/SSIM が最も鈍い領域。留保②ER SDE は毎ステップノイズ注入するため ODE 系より終盤スキップの意味が重い。
 - safe zone streak=3 の下では p≈1 でも実現スキップ率上限 75% で、終盤の挙動は実質決定論化する。ガチャ多様性の損失は小さい見込みだが、実機で「どれくらい運命論的か」を観測してから対策を検討する（`Hare skipped_steps` infotext から複数 seed のパターン間ハミング距離分布を集計するだけで測れる。追加実装不要）。
+
+### 実行手段（実装済み）
+
+- 本実験計画（第1層の単発スキップ掃引、第2層の `{i}`/`{j}`/`{i,j}` 3点セット）で「どのステップを飛ばすか」を数値で明示指定する実行手段として **Manual Skip mode が実装済み**（2026-07-10、`hareskip/manual_skip.py`、Radio 第3モード、`docs/ManualSkip-spec.md`）。カンマ区切り1始まりステップ列を1テキストボックスに指定し、生成前に `p.steps` に対して検証（非数値・範囲外・step 1 はエラーで生成中止）、`Manual skipped_steps` infotext に実現値を記録する。sigma スケジュール捕捉・確率モデルに非依存。
 
 ### 実験設計: 3層構造（組み合わせ爆発 C(30,15)≈1.55億 への回答）
 

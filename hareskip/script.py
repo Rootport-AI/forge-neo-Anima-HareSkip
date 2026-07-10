@@ -23,8 +23,10 @@ from .constants import (
     EXPECTED_UI_ARG_COUNT,
     HARESKIP_MODES,
     MODE_HARESKIP,
+    MODE_MANUAL,
     MODE_TEACACHE,
 )
+from .manual_skip import ManualSkipError, parse_manual_steps, validate_manual_steps
 from .diagnostics import log_generation_start, log_timing_summary
 from .logging import error, exception, info, warning
 from .model_detect import detect_model
@@ -262,6 +264,16 @@ class Script(scripts.Script):
                         elem_id="tea-auto-csv",
                     )
 
+            # --- Manual Skip mode group (hidden by default) -------------------
+            with gr.Group(visible=False) as manual_mode_group:
+                manual_skip_steps = gr.Textbox(
+                    label="Manual skip steps",
+                    lines=1,
+                    max_lines=1,
+                    placeholder="e.g. 10, 12",
+                    elem_id="manual-skip-steps",
+                )
+
             # --- ResRefine shared section (outside both mode groups) ----------
             with gr.Accordion(
                 "ResRefine (residual prediction)",
@@ -424,7 +436,7 @@ class Script(scripts.Script):
             hareskip_mode.change(
                 fn=_hareskip_mode_group_updates,
                 inputs=[hareskip_mode],
-                outputs=[hareskip_mode_group, teacache_mode_group],
+                outputs=[hareskip_mode_group, teacache_mode_group, manual_mode_group],
             )
             hareskip_aggressiveness.change(
                 fn=_hareskip_estimate_updates,
@@ -466,6 +478,7 @@ class Script(scripts.Script):
             hareskip_window_end,
             hareskip_zone_low,
             hareskip_zone_high,
+            manual_skip_steps,
         ]
 
     def before_process(self, p, *script_args):
@@ -479,6 +492,22 @@ class Script(scripts.Script):
         except Exception as exc:
             STATE.set_error(f"auto tea setup failed: {exc}")
             exception("auto tea setup failed")
+            raise
+        # Manual Skip validation runs after UI args are applied (inside
+        # _prepare_auto_teacache_run -> _apply_ui_args). Mirrors the Auto Tea
+        # error path: parse + validate against the concrete p.steps, and abort
+        # generation with a RuntimeError (surfaced in the Forge UI) on any
+        # invalid input rather than silently degrading to full compute.
+        try:
+            _prepare_manual_skip_run(p)
+        except ManualSkipError as exc:
+            STATE.manual_skip_parsed = None
+            STATE.set_error(f"manual skip error: {exc}")
+            error(f"manual_skip_error {exc}")
+            raise RuntimeError(f"Manual Skip error: {exc}") from exc
+        except Exception as exc:
+            STATE.set_error(f"manual skip setup failed: {exc}")
+            exception("manual skip setup failed")
             raise
 
     def process(self, p, *script_args):
@@ -580,6 +609,24 @@ def _prepare_auto_teacache_run(p, script_args) -> None:
         f"rows={len(rows)} original_n_iter={original_n_iter} "
         f"batch_size={batch_size} total_n_iter={total_n_iter}"
     )
+
+
+def _prepare_manual_skip_run(p) -> None:
+    """Parse + validate the Manual Skip step list against the run's p.steps.
+
+    No-op unless HareSkip is enabled and the Manual Skip mode is selected.
+    On success stores the validated 1-based list on STATE.manual_skip_parsed
+    (the patcher reads it); leaves it None otherwise. Raises ManualSkipError
+    on invalid input, which before_process turns into a RuntimeError.
+    """
+    STATE.manual_skip_parsed = None
+    if not (STATE.enabled and STATE.hareskip_mode == MODE_MANUAL):
+        return
+    steps = parse_manual_steps(STATE.manual_skip_steps)
+    num_steps = _positive_int(getattr(p, "steps", 0), 0)
+    validate_manual_steps(steps, num_steps)
+    STATE.manual_skip_parsed = steps
+    info(f"manual_skip_prepare steps={steps} num_steps={num_steps}")
 
 
 def _apply_auto_teacache_seed_template(p) -> None:
@@ -903,6 +950,11 @@ def _apply_infotext_metadata(p) -> None:
                 else:
                     params["Tea auto_row_index"] = STATE.auto_teacache_row_index
                 params["Tea auto_row_name"] = STATE.auto_teacache_row_name or ""
+        elif STATE.hareskip_mode == MODE_MANUAL:
+            # Manual Skip carries only the shared "HareSkip mode" identity key
+            # here; the realized "Manual skipped_steps" key is written later in
+            # postprocess_image (after sampling, once skips have happened).
+            pass
         else:
             params["Hare method"] = METHOD_NAME
             params["Hare method_version"] = METHOD_VERSION
@@ -944,7 +996,12 @@ def _apply_hare_pattern_infotext(p) -> None:
     sampling, before the PNG is saved by Forge) so the pattern keys still
     land in the saved image's metadata.
     """
-    if not STATE.hareskip_enabled or STATE.hareskip_mode != MODE_HARESKIP:
+    if not STATE.hareskip_enabled:
+        return
+    if STATE.hareskip_mode == MODE_MANUAL:
+        _apply_manual_skip_infotext(p)
+        return
+    if STATE.hareskip_mode != MODE_HARESKIP:
         return
     pattern = STATE.hareskip_pattern
     if pattern is None:
@@ -964,6 +1021,25 @@ def _apply_hare_pattern_infotext(p) -> None:
         params["Hare skip_seed"] = pattern.skip_seed
     except Exception as exc:
         warning(f"hareskip_pattern_metadata_failed reason={exc}")
+
+
+def _apply_manual_skip_infotext(p) -> None:
+    """Write the realized Manual skipped_steps infotext key.
+
+    Manual Skip mode only. Reports the REALIZED skips — the actual per-step skip
+    record maintained by the patcher (STATE.hareskip_skipped_steps, 0-based),
+    converted to 1-based and space-joined — rather than the user-specified list.
+    This is truthful even in the (validation-guarded, near-impossible) case
+    where a shared force-full (first_call / missing_residual) overrode a
+    requested skip: the key reflects what was actually skipped. Same write
+    method as the HareSkip "Hare skipped_steps" key.
+    """
+    try:
+        params = _extra_generation_params(p)
+        realized = sorted({int(step) + 1 for step in STATE.hareskip_skipped_steps})
+        params["Manual skipped_steps"] = " ".join(str(step) for step in realized)
+    except Exception as exc:
+        warning(f"manual_skip_metadata_failed reason={exc}")
 
 
 def _format_hare_params(params: dict) -> str:
@@ -1166,13 +1242,20 @@ def _hareskip_enable_updates(enabled: bool):
 
 
 def _hareskip_mode_group_updates(skip_mode: str):
-    """Toggle visibility of the HareSkip and TeaCache mode groups.
+    """Toggle visibility of the HareSkip, TeaCache and Manual Skip mode groups.
 
-    Returns (hareskip_group_update, teacache_group_update) so the two groups
-    are mutually exclusive. Unknown values fall back to HareSkip.
+    Returns (hareskip_group_update, teacache_group_update, manual_group_update)
+    so the three groups are mutually exclusive. Unknown values fall back to
+    HareSkip (the two non-HareSkip groups hidden).
     """
     is_tea = skip_mode == MODE_TEACACHE
-    return gr.update(visible=not is_tea), gr.update(visible=is_tea)
+    is_manual = skip_mode == MODE_MANUAL
+    is_hareskip = not (is_tea or is_manual)
+    return (
+        gr.update(visible=is_hareskip),
+        gr.update(visible=is_tea),
+        gr.update(visible=is_manual),
+    )
 
 
 def _format_hareskip_estimate(aggressiveness) -> str:

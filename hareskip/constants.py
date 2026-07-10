@@ -25,16 +25,19 @@ HareSkip stochastic-mode arguments (``hareskip_mode`` /
 ``hareskip_aggressiveness`` / ``hareskip_skip_seed_offset``) and the
 skip-window / zone-boundary scalars (``hareskip_window_start`` /
 ``hareskip_window_end`` / ``hareskip_zone_low`` / ``hareskip_zone_high``) are
-appended at the end so the original 26 positions are untouched (33 total).
+appended after the original 26, and the Manual Skip mode text field
+(``manual_skip_steps``) is appended last, so every earlier position is
+untouched (34 total).
 """
 
 # --- Skip-strategy mode identifiers -----------------------------------------
 
 MODE_HARESKIP = "HareSkip"
 MODE_TEACACHE = "TeaCache"
+MODE_MANUAL = "Manual Skip"
 
 # Exclusive skip-strategy modes offered by the extension (Radio choices).
-HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE]
+HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL]
 
 
 # --- UI argument synchronisation --------------------------------------------
@@ -45,7 +48,8 @@ HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE]
 #
 # The original 26 arguments keep their positions; the three HareSkip
 # stochastic-mode arguments and the four skip-window / zone-boundary scalars
-# are appended at the end (33 total).
+# are appended next, and the Manual Skip mode text field is appended last
+# (34 total).
 UI_ARG_ORDER = [
     "enabled",
     "debug_log_enabled",
@@ -80,6 +84,7 @@ UI_ARG_ORDER = [
     "hareskip_window_end",
     "hareskip_zone_low",
     "hareskip_zone_high",
+    "manual_skip_steps",
 ]
 
 EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)

@@ -126,6 +126,7 @@ def _dummy_apply_options_args() -> list:
         0.95,   # hareskip_window_end
         -4.0,   # hareskip_zone_low
         0.0,    # hareskip_zone_high
+        "",     # manual_skip_steps
     ]
 
 

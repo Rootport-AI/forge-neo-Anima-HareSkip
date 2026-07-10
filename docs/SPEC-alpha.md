@@ -44,7 +44,7 @@ top-K の deterministic 選択、prompt/seed 過適合、軽量 NN 生成は不�
 
 | ID | 要件 |
 | --- | --- |
-| F-1 | HareSkip / TeaCache の 2 モードを**排他**で提供（Radio 選択）。**デフォルト = HareSkip**。 |
+| F-1 | HareSkip / TeaCache / Manual Skip の 3 モードを**排他**で提供（Radio 選択）。**デフォルト = HareSkip**。Manual Skip は明示指定したステップのみを飛ばす実験用モード（`docs/ManualSkip-spec.md`）。 |
 | F-2 | 拡張全体の `Enable HareSkip` チェックボックスを温存（全モード共通のゲート）。OFF 時はベースライン挙動。 |
 | F-3 | ResRefine（residual 予測/再利用）は**モード外の共通セクション**。両モードで共有。 |
 | F-4 | 確率性は**再現可能**。同一 image seed + 同一 offset は同一 pattern を再生する。 |
@@ -107,7 +107,7 @@ else:  # MODE_TEACACHE
 - `_hareskip_ensure_pattern()` が生成開始時に `STATE.hareskip_schedule_t_now` と `STATE.hareskip_image_seed` から `SkipPattern` を一括生成し `STATE.hareskip_pattern` にキャッシュ。
 - **取得失敗時は劣化**: スケジュール or image seed 欠落なら `None` を返し、`_hareskip_should_calc` はフル演算扱い。`hareskip_schedule_unavailable`（`reason=no_schedule_or_seed`）を 1 回だけ警告。
 
-### 3.4 33 引数 3 点同期
+### 3.4 34 引数 3 点同期
 
 UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argument Sync Rule」）。
 
@@ -115,9 +115,9 @@ UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argumen
 2. `RuntimeState.apply_options` の位置引数シグネチャ（順序・数）
 3. `constants.UI_ARG_ORDER`（正典の順序付き名前リスト）と `EXPECTED_UI_ARG_COUNT`（= `len(UI_ARG_ORDER)`）
 
-現在**33 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset`（α版）＋ `hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`（α+1、skip window / zone boundaries のスカラーミラー）を追加。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
+現在**34 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset`（α版）＋ `hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`（α+1、skip window / zone boundaries のスカラーミラー）＋ `manual_skip_steps`（Manual Skip mode の生テキスト、末尾追加）を追加。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
 
-**Skip window / Zone boundaries の UI 配線（α+1）**: `gradio_rangeslider.RangeSlider`（Forge neo core が `==0.0.8` を同梱）が import 可能なら 2 本の dual-thumb RangeSlider（`hare-skip-window`, `hare-zone-boundaries`）を可視入力ウィジェットとして置き（**return list には入れない**）、その `.change`（`lambda t: (t[0], t[1])`）で `visible=False` の 4 スカラー `gr.Number` ミラーを更新する。RangeSlider が無い環境では、この 4 コンポーネント**自体**を可視の `gr.Slider`（start/end/low/high）フォールバックとして生成する（同一変数名・同一位置）。どちらの経路でも return list に入るのは 4 スカラーのみで、引数数は 33 で不変。
+**Skip window / Zone boundaries の UI 配線（α+1）**: `gradio_rangeslider.RangeSlider`（Forge neo core が `==0.0.8` を同梱）が import 可能なら 2 本の dual-thumb RangeSlider（`hare-skip-window`, `hare-zone-boundaries`）を可視入力ウィジェットとして置き（**return list には入れない**）、その `.change`（`lambda t: (t[0], t[1])`）で `visible=False` の 4 スカラー `gr.Number` ミラーを更新する。RangeSlider が無い環境では、この 4 コンポーネント**自体**を可視の `gr.Slider`（start/end/low/high）フォールバックとして生成する（同一変数名・同一位置）。どちらの経路でも return list に入るのは 4 スカラーのみで、これらの位置は不変（末尾の `manual_skip_steps` は 34 番目として更に後ろに追加）。
 
 ---
 
@@ -205,6 +205,7 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 | 共通（identity） | `HareSkip enabled`, `HareSkip mode` |
 | HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`（生成開始時）／`Hare skip_window`（例 `0.05-0.95`）, `Hare zone_boundaries`（例 `-4.0/0.0`）, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
 | TeaCache モードのみ | `Tea threshold`, `Tea progress`, `Tea coefficient_profile`, `Tea max_skip_streak`, `Tea force_full_interval`, `Tea shift`, `Tea modulated_source`, `Tea capture_pairs`, `Tea auto_row_index`, `Tea auto_row_name` |
+| Manual Skip モードのみ | `Manual skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`） |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
 
 verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / skip をコンソール出力。パターン一括生成時は `hareskip_pattern=` サマリを 1 行出力。

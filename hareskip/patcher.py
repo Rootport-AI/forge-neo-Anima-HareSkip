@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .constants import MODE_HARESKIP
+from .constants import MODE_HARESKIP, MODE_MANUAL
 from .logging import info, warning
 from .skip_pattern import derive_skip_seed, generate_skip_pattern
 from .state import (
@@ -209,11 +209,14 @@ def _hareskip_forward_body(
     step_index = max(0, STATE.denoiser_calls - 1)
     progress = _progress(step_index)
 
-    # HareSkip mode skips the modulated-input + rel_l1 computation entirely
-    # unless calibration capture (a tea-oriented debug feature) forces a full
-    # calc every step and needs rel_l1. TeaCache mode always computes it.
+    # HareSkip and Manual Skip modes skip the modulated-input + rel_l1
+    # computation entirely unless calibration capture (a tea-oriented debug
+    # feature) forces a full calc every step and needs rel_l1. TeaCache mode
+    # always computes it.
     hareskip_mode = STATE.hareskip_mode == MODE_HARESKIP
-    compute_rel_l1 = (not hareskip_mode) or STATE.calibration_capture_active()
+    manual_mode = STATE.hareskip_mode == MODE_MANUAL
+    tea_mode = not (hareskip_mode or manual_mode)
+    compute_rel_l1 = tea_mode or STATE.calibration_capture_active()
 
     rels: dict[Any, float | None] = {}
     if compute_rel_l1:
@@ -245,6 +248,23 @@ def _hareskip_forward_body(
             force_full_reason = shared_force or "calibration_capture"
         else:
             should_calc = (shared_force is not None) or _hareskip_should_calc(
+                step_index
+            )
+            force_full_reason = shared_force
+    elif manual_mode:
+        # Manual Skip: WYSIWYG. Skip exactly the user-listed 1-based steps
+        # (validated pre-generation in before_process). No window / zone /
+        # streak / probability machinery and no sigma-schedule dependency, so
+        # Manual Skip works even when schedule capture is unavailable. The only
+        # override is the shared force-full (first_call / missing_residual),
+        # evaluated FIRST — the same technical necessity as the other modes.
+        shared_force = _shared_force_full_reason(cache, cond_or_uncond)
+        if STATE.calibration_capture_active():
+            _warn_calibration_capture_hareskip()
+            should_calc = True
+            force_full_reason = shared_force or "calibration_capture"
+        else:
+            should_calc = (shared_force is not None) or _manual_should_calc(
                 step_index
             )
             force_full_reason = shared_force
@@ -357,12 +377,16 @@ def _hareskip_forward_body(
                 STATE.hareskip_fallback_reasons[reason] = (
                     STATE.hareskip_fallback_reasons.get(reason, 0) + 1
                 )
+        # Log reason tag: Tea's default skip reason is the rel_l1 "threshold";
+        # Manual Skip's is the explicit user list, so tag it "manual" (the log
+        # helper only uses this fallback when no per-slot resrefine reason set).
+        skip_reason_tag = "manual" if manual_mode else None
         _hareskip_log_call(
             decision,
             step_index,
             progress,
             rels,
-            reason=None,
+            reason=skip_reason_tag,
             late_phase=late_phase,
             skip_streak=skip_streak,
             slot_actions=slot_actions,
@@ -699,6 +723,29 @@ def _hareskip_should_calc(step_index: int) -> bool:
         if STATE.hareskip_logged_calls < 12:
             STATE.hareskip_logged_calls += 1
             warning(f"hareskip_should_calc_failed reason={_short_error(exc)}")
+        return True
+
+
+def _manual_should_calc(step_index: int) -> bool:
+    """Manual Skip per-step decision: True to compute fully, False to skip.
+
+    Reads the validated 1-based skip list on STATE (set in before_process).
+    ``step_index`` is 0-based, so a step is skipped when ``step_index + 1`` is
+    in the list. Wrapped in try/except returning True (full compute) on any
+    error and logging it at most once; like ``_hareskip_should_calc`` it MUST
+    NOT propagate, or the outer patched forward would fall back to the original
+    Anima forward. No pattern / probability / schedule dependency.
+    """
+    try:
+        parsed = STATE.manual_skip_parsed
+        if not parsed:
+            return True
+        return (step_index + 1) not in parsed
+    except Exception as exc:
+        STATE.hareskip_errors += 1
+        if STATE.hareskip_logged_calls < 12:
+            STATE.hareskip_logged_calls += 1
+            warning(f"manual_should_calc_failed reason={_short_error(exc)}")
         return True
 
 
