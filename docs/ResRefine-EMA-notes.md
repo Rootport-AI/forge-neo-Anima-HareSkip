@@ -1,54 +1,110 @@
-# UjiCache EMA Prediction 仕様メモ
+# ResRefine EMA Prediction Notes
 
-> This feature is now called **ResRefine** (`hareskip/resrefine.py`). Content below is unchanged from the original UjiCache-era note.
+> Supersedes the UjiCache-era "EMA Prediction spec" (`ujicache/state.py`, `ujicache/script.py`,
+> `ujicache/patcher.py`), which described the same mechanism under old names. This note reflects
+> the current implementation in `hareskip/resrefine.py`.
 
-## 目的
+## What ResRefine is
 
-UjiCache の `Linear extrapolation` / `Taylor2 curve` で使う residual 予測に EMA smoothing を導入し、skip step の residual 予測を安定させる。
+ResRefine is the shared residual-prediction layer used on **skipped steps** in both TeaCache mode
+and HareSkip mode. When a step's real diffusion residual isn't recomputed, ResRefine decides what
+residual to substitute: either the last real residual verbatim, or a predicted residual
+extrapolated from recent history. It lives outside both mode groups in the UI ("ResRefine
+(residual prediction)" accordion) because both modes route skipped-step residuals through it.
 
-## UI
+On every **full-calculation step**, the real residual is recorded into a short per-slot history
+(`residual_history`, capped at 5 entries) and used to update the EMA velocity/acceleration state.
+On every **skip step**, ResRefine reads that state to produce a predicted residual for the slot.
 
-関連 control:
+## The three prediction formulas
 
-- `Slope EMA Smoothing`
-- `Curve EMA Smoothing`
-- `Prediction strength`
-- `Taylor2 curve strength`
+Controlled by `Prediction formula` (`resrefine_formula`):
 
-`Prediction formula = TeaCache (residual only)` の場合、EMA 予測は使わない。
+- **`Reuse` (`RESREFINE_FORMULA_REUSE`)** — no prediction. Always returns the previous real
+  residual unchanged. This is the default and is equivalent to plain TeaCache-style
+  residual-only reuse.
+- **`Linear extrapolation` (`RESREFINE_FORMULA_LINEAR`)** — extrapolates the residual forward
+  using a first-order (velocity) estimate: `r_pred = r_prev + dt * velocity`.
+- **`Taylor2 curve` (`RESREFINE_FORMULA_TAYLOR2`)** — adds a second-order (acceleration) term on
+  top of the linear estimate: `r_pred = r_prev + dt * velocity + 0.5 * dt^2 * acceleration * Taylor2 curve strength`.
 
-## 挙動
+Without EMA smoothing (`Slope EMA Smoothing = 0`), `velocity`/`acceleration` are derived directly
+from Lagrange interpolation over the last 2 (linear) or 3 (Taylor2) recorded residuals for the
+target `step_index`, rather than from the EMA state described below.
 
-full calculation step では、実 residual を履歴に追加する。履歴から観測速度 `v_obs` を計算し、`Slope EMA Smoothing` によって `velocity_ema` を更新する。
+## Slope/Curve EMA smoothing
 
-Taylor2 では、前回速度との差から観測加速度を計算し、`Curve EMA Smoothing` によって `acceleration_ema` を更新する。
+When `Slope EMA Smoothing` (`resrefine_slope_ema_smoothing`, i.e. `beta_v`) is greater than 0,
+ResRefine switches to EMA-smoothed velocity/acceleration instead of raw Lagrange fits:
 
-skip step では、EMA が十分に準備できていれば以下を使う。
+- On each full step, the observed velocity `v_obs = (residual - previous_residual) / dt` is
+  computed from the two most recent recorded residuals, and blended into `velocity_ema`:
+  `velocity_ema = beta_v * velocity_ema + (1 - beta_v) * v_obs`.
+- If a previous velocity observation is also available, the observed acceleration
+  `a_obs = (v_obs - previous_velocity) / dt_v` is computed and blended into `acceleration_ema`
+  using `Curve EMA Smoothing` (`resrefine_curve_ema_smoothing`, `beta_a`) the same way.
+- `velocity_ema` seeds itself from the first `v_obs` (and likewise for `acceleration_ema`); EMA
+  smoothing only "kicks in" (i.e. blends rather than resets) once a prior EMA value of matching
+  shape already exists.
+- On a skip step, `Linear`/`Taylor2` then predict using `velocity_ema` (and `acceleration_ema`
+  for Taylor2) projected forward by `dt_pred = step_index - last_recorded_step_index`. If
+  `velocity_ema` isn't ready yet, or acceleration is missing for Taylor2, prediction falls back
+  (Taylor2 degrades to its linear term when only acceleration is missing).
+
+Two additional gates limit *when* prediction is attempted at all, regardless of formula:
+`Use prediction after progress` (`resrefine_use_prediction_after_progress`) and `Apply prediction
+from skip #` (`resrefine_apply_prediction_from_skip`, i.e. don't predict until the `skip_streak`
+reaches this count, unless already in the late phase).
+
+## Prediction strength blending
+
+Whatever raw prediction is produced (Lagrange or EMA-based) is blended with the previous real
+residual using `Prediction strength` (`resrefine_prediction_strength`):
 
 ```text
-linear:
-  r_pred = r_prev + dt * velocity_ema
-
-taylor2:
-  r_pred = r_prev + dt * velocity_ema + 0.5 * dt^2 * acceleration_ema * Taylor2 curve strength
+result = r_prev + prediction_strength * (raw_prediction - r_prev)
 ```
 
-最後に `Prediction strength` で直近 residual と予測 residual を混ぜる。
+`prediction_strength = 0` is equivalent to `Reuse`; `1` uses the raw prediction unmodified.
+`Taylor2 curve strength` (`resrefine_taylor2_curve_strength`) separately controls how much the
+quadratic/acceleration term contributes within the Taylor2 formula itself, before this blend.
 
-## Fallback
+## Validation guard and fallback
 
-以下の場合は予測せず、直近 residual に fallback する。
+Every prediction is passed through `_resrefine_validate_prediction` before use:
 
-- `previous_residual` が無い
-- 履歴が足りない
-- EMA velocity が未準備
-- shape mismatch
-- non-finite value
-- norm guard に引っかかった
-- dtype / device 変換に失敗した
+- Shape must match both the previous residual and the target tensor slice.
+- All values must be finite.
+- **Norm guard**: if `||prediction|| > ||previous|| * RESREFINE_MAX_NORM_RATIO` (constant
+  `RESREFINE_MAX_NORM_RATIO = 3.0` in `hareskip/resrefine.py`), the prediction is rejected as a
+  runaway extrapolation.
+- The result must be convertible to the previous residual's device/dtype.
 
-## 実装ファイル
+ResRefine falls back to the last real residual (verbatim reuse) whenever: there is no
+`previous_residual`; the formula is `Reuse`; prediction isn't yet allowed (progress/streak gates);
+history is insufficient or has a shape mismatch; EMA velocity isn't ready; the norm guard trips;
+or any other numeric/dtype error occurs during prediction.
 
-- `ujicache/state.py`
-- `ujicache/script.py`
-- `ujicache/patcher.py`
+## UI controls and infotext keys
+
+Accordion: **"ResRefine (residual prediction)"** in `hareskip/script.py`.
+
+| UI label | State field | Infotext key |
+|---|---|---|
+| Prediction formula | `resrefine_formula` | `ResRefine formula` |
+| Use prediction after progress | `resrefine_use_prediction_after_progress` | `ResRefine use_prediction_after_progress` |
+| Apply prediction from skip # | `resrefine_apply_prediction_from_skip` | `ResRefine apply_prediction_from_skip` |
+| Prediction strength | `resrefine_prediction_strength` | `ResRefine prediction_strength` |
+| Taylor2 curve strength | `resrefine_taylor2_curve_strength` | `ResRefine taylor2_curve_strength` |
+| Slope EMA Smoothing | `resrefine_slope_ema_smoothing` | `ResRefine slope_ema_smoothing` |
+| Curve EMA Smoothing | `resrefine_curve_ema_smoothing` | `ResRefine curve_ema_smoothing` |
+| Cache device | `resrefine_cache_device` | — |
+
+The prediction-related infotext keys are only written when `resrefine_formula != Reuse`; the
+Taylor2 strength key is only written when `resrefine_formula == Taylor2 curve`. There is also a
+debug-only `Dump ResRefine residual` checkbox (`dump_resrefine_residual`) unrelated to prediction
+behavior.
+
+## Implementation file
+
+- `hareskip/resrefine.py`

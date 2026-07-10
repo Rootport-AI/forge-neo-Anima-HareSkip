@@ -59,7 +59,7 @@ Forge Neo can cache Gradio UI component defaults (slider ranges, default values,
 - [HareSkip design spec](docs/HareSkip-design.md) — canonical stochastic skip-density design (imported from the pre-study archive)
 - [ResRefine EMA notes](docs/ResRefine-EMA-notes.md)
 - [Coefficient profile presets](docs/PRESET-COEFFICIENTS.md) (TeaCache mode)
-- [Calibration results](docs/CALIBRATION-RESULTS.md) (TeaCache mode)
+- [Calibration results](docs/archive/CALIBRATION-RESULTS.md) (TeaCache mode, archived historical material)
 - Archived pre-fork specs: [`docs/archive/`](docs/archive/)
 
 ## License and Credit
