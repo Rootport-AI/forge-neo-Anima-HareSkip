@@ -237,5 +237,7 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 - step 間隔補正 `Δz`（不均一なステップ間隔への補正）。
 - ゾーン境界 / streak の条件依存化（sampler / scheduler / shift ごとの調整）。
 - `p_cap` / `z_enter` の較正手順の確立（実機での a → skip 数較正）。
+- 確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。
+- 再キャリブレーション実験計画は `docs/HANDOFF-next-session.md` §4.5 参照。
 
 較正の実運用は §5-1 と `docs/HANDOFF-next-session.md` の「予想される修正ポイント」に従い、`probability_models.py` に新バージョン（例 `sigmoid_band_v0.2`）を登録して切り替える方針（v0.1 は書き換えない）。
