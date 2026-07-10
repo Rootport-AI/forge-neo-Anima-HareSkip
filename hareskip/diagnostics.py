@@ -11,6 +11,7 @@ from .forge_introspection import (
 )
 from .logging import info, warning
 from .model_detect import ModelDetection
+from .constants import MODE_HARESKIP
 from .state import MODE_DIAGNOSE, MODE_OFF, STATE
 from .timing import timing_summary
 
@@ -62,23 +63,33 @@ def log_generation_start(p: Any) -> None:
 def log_experiment_snapshot() -> None:
     if STATE.hareskip_enabled:
         info(
-            "hareskip_config="
-            f"enabled=True preset={STATE.tea_preset} "
-            f"formula={STATE.resrefine_formula} "
+            "hare_config="
+            f"mode={STATE.hareskip_mode} "
+            f"aggressiveness={STATE.hareskip_aggressiveness:.2f} "
+            f"skip_seed_offset={STATE.hareskip_skip_seed_offset} "
+            f"probability_model={STATE.hareskip_probability_model} "
+            f"dry_run={STATE.hareskip_dry_run}"
+        )
+        info(
+            "tea_config="
+            f"preset={STATE.tea_preset} "
             f"threshold={STATE.tea_threshold:.4f} "
             f"progress={STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f} "
+            f"source={STATE.tea_modulated_source} "
+            f"coefficient_profile={STATE.tea_coefficient_profile} "
+            f"max_skip_streak={STATE.tea_max_skip_streak} "
+            f"force_full_interval={STATE.tea_force_full_interval}"
+        )
+        info(
+            "resrefine_config="
+            f"formula={STATE.resrefine_formula} "
             f"use_prediction_after={STATE.resrefine_use_prediction_after_progress:.2f} "
             f"apply_from_skip={STATE.resrefine_apply_prediction_from_skip} "
             f"prediction_strength={STATE.resrefine_prediction_strength:.2f} "
             f"taylor2_curve_strength={STATE.resrefine_taylor2_curve_strength:.2f} "
             f"slope_ema_smoothing={STATE.resrefine_slope_ema_smoothing:.2f} "
             f"curve_ema_smoothing={STATE.resrefine_curve_ema_smoothing:.2f} "
-            f"cache_device={STATE.resrefine_cache_device} "
-            f"source={STATE.tea_modulated_source} "
-            f"coefficient_profile={STATE.tea_coefficient_profile} "
-            f"max_skip_streak={STATE.tea_max_skip_streak} "
-            f"force_full_interval={STATE.tea_force_full_interval} "
-            f"dry_run={STATE.hareskip_dry_run}"
+            f"cache_device={STATE.resrefine_cache_device}"
         )
     if STATE.auto_teacache_active:
         info(
@@ -163,8 +174,18 @@ def log_timing_summary() -> None:
             if total_decisions
             else 0.0
         )
+        pattern = STATE.hareskip_pattern
+        pattern_fields = ""
+        if STATE.hareskip_mode == MODE_HARESKIP and pattern is not None:
+            pattern_fields = (
+                " pattern_skip_count="
+                f"{pattern.skip_count} "
+                f"pattern_skipped_steps={_fmt_step_ranges(pattern.skipped_steps)} "
+                f"pattern_skip_seed={pattern.skip_seed}"
+            )
         info(
             "hareskip_summary="
+            f"mode={STATE.hareskip_mode} "
             f"model_calls={STATE.hareskip_model_calls} "
             f"full_calcs={STATE.hareskip_full_calcs} "
             f"skips={STATE.hareskip_skips} "
@@ -172,7 +193,8 @@ def log_timing_summary() -> None:
             f"fallback_used={STATE.hareskip_fallback_used} "
             f"dry_run_predictions={STATE.hareskip_dry_run_predictions} "
             f"skip_rate={skip_rate:.3f} "
-            f"skipped_steps={_fmt_step_ranges(STATE.hareskip_skipped_steps)} "
+            f"skipped_steps={_fmt_step_ranges(STATE.hareskip_skipped_steps)}"
+            f"{pattern_fields} "
             f"first_full_calcs={STATE.hareskip_first_full_calcs} "
             f"forced_full_calcs={STATE.hareskip_forced_full_calcs} "
             f"fallbacks={STATE.hareskip_fallbacks} "

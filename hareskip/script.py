@@ -19,6 +19,7 @@ from .diagnostics import log_generation_start, log_timing_summary
 from .logging import error, exception, info, warning
 from .model_detect import detect_model
 from .patcher import apply_patch, remove_patch
+from .probability_models import METHOD_NAME, METHOD_VERSION
 from .state import (
     MODE_OFF,
     MODES,
@@ -399,6 +400,19 @@ class Script(scripts.Script):
             STATE.set_error(f"process_before_every_sampling failed: {exc}")
             exception("process_before_every_sampling failed")
 
+    def postprocess_image(self, p, pp, *script_args):
+        # Runs per-image, after sampling but before the PNG is saved (Forge
+        # calls this from process_images_inner ahead of images.save_image).
+        # The HareSkip skip pattern is only generated lazily on the first
+        # patched model forward call during sampling, so pattern-dependent
+        # infotext keys (Hare guard_count/params/skipped_steps/skip_count/
+        # skip_seed) cannot be written any earlier than this hook.
+        try:
+            _apply_hare_pattern_infotext(p)
+        except Exception as exc:
+            STATE.set_error(f"postprocess_image failed: {exc}")
+            exception("postprocess_image failed")
+
     def postprocess(self, p, processed, *script_args):
         try:
             log_timing_summary()
@@ -746,66 +760,125 @@ def _capture_hareskip_image_seed(p) -> None:
         STATE.hareskip_image_seed = None
 
 
+def _extra_generation_params(p) -> dict:
+    params = getattr(p, "extra_generation_params", None)
+    if not isinstance(params, dict):
+        params = {}
+        setattr(p, "extra_generation_params", params)
+    return params
+
+
 def _apply_infotext_metadata(p) -> None:
+    """Write mode-independent + mode-selected (non-pattern) infotext keys.
+
+    Called from ``_begin_generation`` (``process_before_every_sampling``),
+    i.e. before sampling starts. The HareSkip mode's realized skip pattern
+    does not exist yet at this point (it is generated lazily on the first
+    patched forward call during sampling) — those keys are written later by
+    ``_apply_hare_pattern_infotext`` from the ``postprocess_image`` hook,
+    which runs after sampling but before the PNG is saved.
+    """
     if not STATE.hareskip_enabled:
         return
     try:
-        params = getattr(p, "extra_generation_params", None)
-        if not isinstance(params, dict):
-            params = {}
-            setattr(p, "extra_generation_params", params)
-        _clear_legacy_ujicache_metadata(params)
-        params["Uji enabled"] = True
-        params["Uji formula"] = STATE.resrefine_formula
-        params["Uji threshold"] = f"{STATE.tea_threshold:.4f}"
-        params["Uji progress"] = (
-            f"{STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f}"
-        )
-        params["Uji use_prediction_after_progress"] = (
-            f"{STATE.resrefine_use_prediction_after_progress:.2f}"
-        )
-        params["Uji apply_prediction_from_skip"] = STATE.resrefine_apply_prediction_from_skip
-        params["Uji prediction_strength"] = f"{STATE.resrefine_prediction_strength:.2f}"
-        params["Uji taylor2_curve_strength"] = (
-            f"{STATE.resrefine_taylor2_curve_strength:.2f}"
-        )
-        params["Uji slope_ema_smoothing"] = f"{STATE.resrefine_slope_ema_smoothing:.2f}"
-        params["Uji curve_ema_smoothing"] = f"{STATE.resrefine_curve_ema_smoothing:.2f}"
-        params["Uji modulated_source"] = STATE.tea_modulated_source
-        params["Uji coefficient_profile"] = STATE.tea_coefficient_profile
-        params["Uji max_skip_streak"] = STATE.tea_max_skip_streak
-        params["Uji force_full_interval"] = STATE.tea_force_full_interval
-        shift_value = _model_sampling_shift()
-        if shift_value is not None:
-            params["Uji shift"] = f"{shift_value:.2f}"
-        if STATE.capture_calibration_pairs:
-            params["Uji capture_pairs"] = True
-        if STATE.auto_teacache_active and STATE.auto_teacache_row_index is not None:
-            if STATE.auto_teacache_row_count > 0:
-                params["Uji auto_row_index"] = (
-                    f"{STATE.auto_teacache_row_index}/{STATE.auto_teacache_row_count}"
+        params = _extra_generation_params(p)
+        params["HareSkip enabled"] = True
+        params["HareSkip mode"] = STATE.hareskip_mode
+
+        if STATE.hareskip_mode == MODE_TEACACHE:
+            params["Tea threshold"] = f"{STATE.tea_threshold:.4f}"
+            params["Tea progress"] = (
+                f"{STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f}"
+            )
+            params["Tea coefficient_profile"] = STATE.tea_coefficient_profile
+            params["Tea max_skip_streak"] = STATE.tea_max_skip_streak
+            params["Tea force_full_interval"] = STATE.tea_force_full_interval
+            shift_value = _model_sampling_shift()
+            if shift_value is not None:
+                params["Tea shift"] = f"{shift_value:.2f}"
+            params["Tea modulated_source"] = STATE.tea_modulated_source
+            if STATE.capture_calibration_pairs:
+                params["Tea capture_pairs"] = True
+            if STATE.auto_teacache_active and STATE.auto_teacache_row_index is not None:
+                if STATE.auto_teacache_row_count > 0:
+                    params["Tea auto_row_index"] = (
+                        f"{STATE.auto_teacache_row_index}/{STATE.auto_teacache_row_count}"
+                    )
+                else:
+                    params["Tea auto_row_index"] = STATE.auto_teacache_row_index
+                params["Tea auto_row_name"] = STATE.auto_teacache_row_name or ""
+        else:
+            params["Hare method"] = METHOD_NAME
+            params["Hare method_version"] = METHOD_VERSION
+            params["Hare probability_model"] = STATE.hareskip_probability_model
+            params["Hare aggressiveness"] = f"{STATE.hareskip_aggressiveness:.2f}"
+            params["Hare skip_seed_offset"] = STATE.hareskip_skip_seed_offset
+            if STATE.hareskip_pattern is None:
+                params["Hare pattern"] = "unavailable"
+
+        params["ResRefine formula"] = STATE.resrefine_formula
+        if STATE.resrefine_formula != RESREFINE_FORMULA_REUSE:
+            params["ResRefine use_prediction_after_progress"] = (
+                f"{STATE.resrefine_use_prediction_after_progress:.2f}"
+            )
+            params["ResRefine apply_prediction_from_skip"] = (
+                STATE.resrefine_apply_prediction_from_skip
+            )
+            params["ResRefine prediction_strength"] = f"{STATE.resrefine_prediction_strength:.2f}"
+            if STATE.resrefine_formula == RESREFINE_FORMULA_TAYLOR2:
+                params["ResRefine taylor2_curve_strength"] = (
+                    f"{STATE.resrefine_taylor2_curve_strength:.2f}"
                 )
-            else:
-                params["Uji auto_row_index"] = STATE.auto_teacache_row_index
-            params["Uji auto_row_name"] = STATE.auto_teacache_row_name or ""
+            params["ResRefine slope_ema_smoothing"] = (
+                f"{STATE.resrefine_slope_ema_smoothing:.2f}"
+            )
+            params["ResRefine curve_ema_smoothing"] = (
+                f"{STATE.resrefine_curve_ema_smoothing:.2f}"
+            )
     except Exception as exc:
         warning(f"hareskip_metadata_failed reason={exc}")
 
 
-def _clear_legacy_ujicache_metadata(params: dict) -> None:
-    for key in (
-        "UjiCache enabled",
-        "UjiCache formula",
-        "UjiCache use_prediction_after_progress",
-        "UjiCache apply_prediction_from_skip",
-        "UjiCache prediction_strength",
-        "UjiCache taylor2_curve_strength",
-        "UjiCache slope_ema_smoothing",
-        "UjiCache curve_ema_smoothing",
-        "Uji auto_row_index",
-        "Uji auto_row_name",
-    ):
-        params.pop(key, None)
+def _apply_hare_pattern_infotext(p) -> None:
+    """Write the realized HareSkip pattern's infotext keys, once it exists.
+
+    HareSkip mode only: the skip pattern is generated lazily on the first
+    patched Anima forward call, so it is not available until sampling has
+    started. This runs from ``postprocess_image`` (per-image, after
+    sampling, before the PNG is saved by Forge) so the pattern keys still
+    land in the saved image's metadata.
+    """
+    if not STATE.hareskip_enabled or STATE.hareskip_mode != MODE_HARESKIP:
+        return
+    pattern = STATE.hareskip_pattern
+    if pattern is None:
+        return
+    try:
+        params = _extra_generation_params(p)
+        params.pop("Hare pattern", None)
+        params["Hare guard_count"] = pattern.guard_count
+        params["Hare params"] = _format_hare_params(pattern.params)
+        params["Hare skipped_steps"] = " ".join(str(step) for step in pattern.skipped_steps)
+        params["Hare skip_count"] = pattern.skip_count
+        params["Hare skip_seed"] = pattern.skip_seed
+    except Exception as exc:
+        warning(f"hareskip_pattern_metadata_failed reason={exc}")
+
+
+def _format_hare_params(params: dict) -> str:
+    """Compact, infotext-safe rendering of the probability model's params dict.
+
+    Semicolon-joined ``k=v`` pairs with floats rounded to 4 decimals — avoids
+    commas/quotes, which would otherwise break Forge's infotext key=value,
+    key=value parsing.
+    """
+    parts = []
+    for key, value in params.items():
+        if isinstance(value, float):
+            parts.append(f"{key}={value:.4f}")
+        else:
+            parts.append(f"{key}={value}")
+    return ";".join(parts)
 
 
 def _configure_generation_patches() -> None:
