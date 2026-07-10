@@ -1,5 +1,7 @@
 # UjiCache 係数キャリブレーション結果 — ER SDE / Beta / 30steps
 
+> This document applies to HareSkip's **TeaCache mode** (formerly UjiCache). Content below is unchanged from the original UjiCache-era note.
+
 > 対象: `ER-SDE-Beta_30steps_Shift1 / Shift2 / Shift3`
 > 方針: brief「方針 A」(daraskme 氏と同一形式 `y = p(x)` のまま Shift 別に係数を出し直す)
 > **採用次数: deg=4(5 係数。daraskme 氏と同次数)。実装係数は §9 を参照。**

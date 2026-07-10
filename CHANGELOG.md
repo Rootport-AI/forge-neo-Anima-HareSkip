@@ -1,5 +1,17 @@
 ﻿# Changelog
 
+## 0.1.0 (alpha)
+
+- Forked from UjiCache; renamed the package to `hareskip` and the Forge entrypoint to `scripts/hareskip.py`.
+- Renamed namespaces into three concerns: `HareSkip`/`hareskip` (extension identity: panel, settings section, logger `[HareSkip]`, `model._hareskip_state`), `Tea`/`tea` (the legacy TeaCache-style skip decision, formerly `UjiCache`'s only decision path), and `ResRefine`/`resrefine` (residual prediction/reuse, formerly folded into the UjiCache namespace).
+- Added a new default skip-decision strategy, **HareSkip stochastic skip-density mode**: skip steps are drawn from a probability density over a trajectory coordinate `z` (logSNR proxy from `t_now`), with zone-based max-skip-streak pruning and mandatory first/last guard steps, instead of a threshold accumulator. TeaCache mode remains available as a Radio-selectable alternative with unchanged numerics.
+- Added sigma-schedule capture (via the `on_cfg_denoiser` callback) to obtain the full `t_now` sequence needed to generate a stochastic pattern up front, with a safe degrade to full computation (and a one-time warning) when the schedule or image seed is unavailable.
+- Added reproducible skip seeds: `skip_seed = sha256(f"{image_seed}|hareskip|{offset}") mod 2**63`, with a user-facing "skip seed offset" control to re-roll a different pattern for the same image seed.
+- Added a UI mode selector (`HareSkip` / `TeaCache` Radio, default `HareSkip`) with a shared `Enable HareSkip` gate and a shared ResRefine section.
+- Re-prefixed infotext/metadata keys by concern: `HareSkip ...` (identity), `Hare ...` (HareSkip-mode fields), `Tea ...` (TeaCache-mode fields), `ResRefine ...` (residual prediction fields).
+- Renamed Auto Uji mode to **Auto Tea mode** (`auto_teacache.py`).
+- Removed `_clear_legacy_ujicache_metadata` and its call site; no longer needed with the new key scheme.
+
 ## Unreleased
 
 - Added: `Capture calibration pairs` (Debug log mode) — per-step (rel_l1, out_rel) JSONL capture with run conditions incl. Shift; forces full calculation on every model call.

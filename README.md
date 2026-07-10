@@ -1,42 +1,66 @@
-﻿# UjiCache
+# HareSkip
 
-UjiCache is a Forge Neo extension for experimenting with residual reuse and residual prediction during Anima / Cosmos-Predict2 T2I inference.
+HareSkip is a Forge Neo extension for stochastic skip-density step-skip acceleration on Anima T2I inference. It is a fork of its predecessor extension (which itself split out of the broader `Nz-Anima-PredLab` experiment set); this repository renames and reorganizes that codebase around a new default skip strategy while keeping the legacy strategy available as a secondary mode.
 
-It was split out from the broader `Nz-Anima-PredLab` experiment set. This repository now exposes only the UjiCache prototype and a compact debug log mode.
+HareSkip works by monkey-patching `Anima._forward` so selected DiT blocks-loop passes can be skipped and replaced with a predicted residual, instead of being fully recomputed every step.
 
-## Current Features
+## Two Modes
 
-- Forge Neo AlwaysVisible panel: `UjiCache`
-- Anima / Cosmos-Predict2 model detection
-- UjiCache residual cache experiment for Anima block skipping
-- Prediction formulas: `TeaCache (residual only)`, `Linear extrapolation`, and `Taylor2 curve`
-- Coefficient profiles: daraskme legacy, Identity, and 24 re-calibrated Forge Neo presets; selecting a profile loosely sets the Start/End progress window
-- Read-only `p_Anima(x)` display of the active polynomial coefficients
-- Auto Uji mode for CSV-driven UjiCache parameter sweeps
-- Debug log mode with timing logs, diagnose logs, optional UjiCache residual dump, and `Capture calibration pairs` (per-step rel_l1/out_rel JSONL for coefficient re-fitting)
-- Runtime patch restore on disable, unsupported model, or unload
+The extension offers two mutually exclusive skip-decision strategies, selected with a Radio control (`Enable HareSkip` must also be on):
 
-Logs are printed to the StabilityMatrix / Forge Neo console with the `[UjiCache]` prefix.
+- **HareSkip (default)** — a *stochastic* pattern generated once per generation from a skip-probability density over a trajectory coordinate `z` (a logSNR proxy computed from `t_now`: `z = 2*ln((1-t)/t)`). `p_skip(z; a)` is a sigmoid-band function of `z` and the aggressiveness slider `a`; the full step pattern is drawn up front (not decided step-by-step) because the max-skip-streak constraint needs the whole picture. Skips are pruned per rough trajectory zone (`danger` / `middle` / `safe` / `final`, with `final` deliberately conservative — a "final taper") so no run of consecutive skips exceeds its zone's allowance, and the first/last ~5% of steps are always guarded (forced to full computation) regardless of probability.
+- **TeaCache (legacy)** — the original accumulator-based decision: a per-step relative-L1 distance between successive modulated inputs is mapped through a calibrated polynomial (`p_Anima(x)`) and accumulated; a step is skipped while the accumulator stays under a threshold. Includes coefficient profile presets, start/end progress windows, force-full interval, and max skip streak. This mode's numerics are unchanged from the predecessor extension — only names were renamed.
 
-## Notes
+Both modes share the same `first_call` / `missing_residual` safety checks (a skip is never applied before a residual exists) and the same exception-safe fallback: any error inside the skip-decision logic degrades to a full calculation rather than propagating out and losing the whole generation.
 
-UjiCache uses TeaCache-style skip decisions internally, but the standalone TeaCache experiment UI and all other PredLab experiments have been removed. The first model call is always a full calculation, and UjiCache falls back instead of using the cache when `previous_residual` is missing.
+## ResRefine (shared residual prediction)
 
-Forge Neo may pass unused kwargs such as `control` into `Anima.forward`; UjiCache ignores unused kwargs and consumes only the values it needs, especially `transformer_options`.
+Whichever mode decides *that* a step is skipped, **ResRefine** decides what value to substitute for the block-loop's output on that step. It is a residual-prediction/reuse layer shared by both modes:
+
+- `Reuse` — reuse the most recent full-step residual unchanged (the historical "TeaCache (residual only)" behavior, renamed).
+- `Linear` — linear extrapolation of the residual from recent full steps.
+- `Taylor2` — second-order (curvature-aware) extrapolation.
+
+Linear/Taylor2 predictions are smoothed with EMA (`resrefine_slope_ema_smoothing` / `resrefine_curve_ema_smoothing`), gated by a "use prediction after progress" threshold and an "apply prediction from skip #" threshold, and validated against a max-norm-ratio guard before being applied; on any failure ResRefine falls back to plain reuse.
+
+## Aggressiveness Slider and Skip Seed Offset
+
+In HareSkip mode, `a` (0.0–1.0, default 0.5) controls how much of the trajectory is skip-eligible and how high the skip probability rises there — it is *not* a direct skip-count dial. Because the pattern is stochastic, the same `a` and the same image seed can still draw a different pattern via the **skip seed offset**: a small reproducible "gacha re-roll" integer. The skip sampler seed is derived deterministically as `sha256(f"{image_seed}|hareskip|{offset}") mod 2**63` (never the builtin `hash()`, which is per-process salted and would break reproducibility). Same image seed + same offset always reproduces the same skip pattern; changing the offset re-rolls a new one without touching the image seed.
+
+## Infotext Key Scheme
+
+PNG infotext / metadata keys are namespaced by which layer produced them:
+
+- `HareSkip enabled`, `HareSkip mode` — extension on/off and the active mode.
+- `Hare ...` — HareSkip-mode-only fields (method, method_version, aggressiveness, guard_count, params, skipped_steps, skip_count, skip_seed, skip_seed_offset). Present only when HareSkip mode is active.
+- `Tea ...` — TeaCache-mode-only fields (threshold, coefficient_profile, start/end percent, max_skip_streak, force_full_interval, etc). Present only when TeaCache mode is active.
+- `ResRefine ...` — residual-prediction fields, present regardless of mode.
+
+## Install
+
+Standard Forge Neo extension install: in the WebUI's Extensions tab, install from the git URL of this repository, or clone it directly into Forge Neo's `extensions/` directory. Restart Forge Neo after install.
+
+### ui-config.json gotcha
+
+Forge Neo can cache Gradio UI component defaults (slider ranges, default values, etc.) per `elem_id` in `ui-config.json`. Every control in this extension uses a fresh `elem_id` (the `hareskip-*` / `hare-*` / `tea-*` / `resrefine-*` prefixes are new relative to the predecessor extension's IDs), so a clean install should pick up current defaults automatically. If you are upgrading in place over an old `ui-config.json` and a slider or default still looks stale, clear the relevant entries (or the whole file) and restart Forge Neo.
+
+## Status
+
+**Alpha.** The stochastic skip-density formula (`sigmoid_band_v0.1`) is the design spec's initial parameterization; it has not yet been validated against real generations. Live calibration of `aggressiveness -> actual skip count` (e.g. confirming `a=0.5` lands near 10 skips and `a=1.0` near 15 skips out of 30 steps, and confirming the sign/direction of the logSNR proxy against the real sampler schedule) happens on a separate verification machine with a working Forge Neo + GPU setup, not in this development environment. See `docs/HareSkip-design.md` for the full design rationale and `hareskip/skip_pattern.py` / `hareskip/probability_models.py` for the implementation.
 
 ## Compatibility
 
 - Target: StabilityMatrix Forge Neo / SD WebUI Forge Neo
 - Primary workflow: txt2img with Anima / Cosmos-Predict2 T2I models
-- Verified development environment: Windows, NVIDIA GPU, PyTorch CUDA build
 - Not guaranteed: A1111 mainline, Forge classic, ComfyUI, multi-GPU, heavily modified pipelines
 
 ## Documentation
 
-- [UjiCache specification](docs/UjiCache-spec-v1.2.md)
-- [UjiCache EMA prediction notes](docs/UjiCache%20EMA%20Prediction_spec.md)
-- [Auto Uji mode specification](docs/Auto-Uji-mode_spec_v1.0.md)
-- [Coefficient profile presets](docs/PRESET-COEFFICIENTS.md)
+- [HareSkip design spec](docs/HareSkip-design.md) — canonical stochastic skip-density design (imported from the pre-study archive)
+- [ResRefine EMA notes](docs/ResRefine-EMA-notes.md)
+- [Coefficient profile presets](docs/PRESET-COEFFICIENTS.md) (TeaCache mode)
+- [Calibration results](docs/CALIBRATION-RESULTS.md) (TeaCache mode)
+- Archived pre-fork specs: [`docs/archive/`](docs/archive/)
 
 ## License and Credit
 
@@ -44,7 +68,4 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 Credit to `Rootport` or `Rootport-AI` is mandatory. Redistributions and derivative works must preserve the attribution in [NOTICE](NOTICE), as required by Apache License 2.0 Section 4(d).
 
-## Development Reminder
-
-Forge Neo may cache Gradio UI component settings in `ui-config.json`. If a slider range or default appears stale after reinstalling the extension, clear or update Forge Neo's UI config and restart the WebUI.
-
+HareSkip is forked from UjiCache.

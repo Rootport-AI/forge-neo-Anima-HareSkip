@@ -1,5 +1,7 @@
 # UjiCache EMA Prediction 仕様メモ
 
+> This feature is now called **ResRefine** (`hareskip/resrefine.py`). Content below is unchanged from the original UjiCache-era note.
+
 ## 目的
 
 UjiCache の `Linear extrapolation` / `Taylor2 curve` で使う residual 予測に EMA smoothing を導入し、skip step の residual 予測を安定させる。

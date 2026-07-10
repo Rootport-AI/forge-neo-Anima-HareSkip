@@ -1,5 +1,7 @@
 # UjiCache Coefficient Profile プリセット一覧(24 パターン)
 
+> This document applies to HareSkip's **TeaCache mode** (formerly UjiCache). Content below is unchanged from the original UjiCache-era note.
+
 > UjiCache の Coefficient profile に追加するためのプリセット名 + 多項式係数の一覧。
 > 現状のプリセットは「Anima 2B 30step first_block_shift」(daraskme 氏 ComfyUI 版)と
 > 「Identity Estimate」(p(x)=x)の 2 つのみ。本表はそこへ追加する 24 プリセット。
