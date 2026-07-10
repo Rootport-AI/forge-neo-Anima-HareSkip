@@ -266,6 +266,15 @@ class RuntimeState:
     hareskip_mode: str = MODE_HARESKIP
     hareskip_aggressiveness: float = 0.5
     hareskip_skip_seed_offset: int = 0
+    # User-configurable skip window (progress domain) and zone boundaries (z
+    # domain), wired through apply_options from the dual-thumb RangeSliders
+    # (see constants.UI_ARG_ORDER). Defaults reproduce the former guard rule
+    # and the 3-zone boundaries. Stored as separate scalars; the pattern
+    # generator receives them as tuples on generation start.
+    hareskip_window_start: float = 0.05
+    hareskip_window_end: float = 0.95
+    hareskip_zone_low: float = -4.0
+    hareskip_zone_high: float = 0.0
     hareskip_probability_model: str = "sigmoid_band_v0.1"
     hareskip_image_seed: Optional[int] = None
     # Per-step flow-time (t_now) schedule captured for this generation.
@@ -386,6 +395,10 @@ class RuntimeState:
         hareskip_mode: str = MODE_HARESKIP,
         hareskip_aggressiveness: float = 0.5,
         hareskip_skip_seed_offset: int = 0,
+        hareskip_window_start: float = 0.05,
+        hareskip_window_end: float = 0.95,
+        hareskip_zone_low: float = -4.0,
+        hareskip_zone_high: float = 0.0,
     ) -> None:
         self.enabled = bool(enabled)
         self.debug_log_enabled = bool(debug_log_enabled)
@@ -453,6 +466,15 @@ class RuntimeState:
             self.hareskip_skip_seed_offset = int(hareskip_skip_seed_offset)
         except Exception:
             self.hareskip_skip_seed_offset = 0
+
+        # Skip window (progress domain): clamp to [0, 1], enforce start <= end.
+        self.hareskip_window_start, self.hareskip_window_end = _normalize_range(
+            hareskip_window_start, hareskip_window_end, 0.0, 1.0, 0.05, 0.95
+        )
+        # Zone boundaries (z domain): clamp to [-8, 8], enforce low <= high.
+        self.hareskip_zone_low, self.hareskip_zone_high = _normalize_range(
+            hareskip_zone_low, hareskip_zone_high, -8.0, 8.0, -4.0, 0.0
+        )
 
     def active(self) -> bool:
         return (
@@ -564,6 +586,35 @@ def _clamp_float(value: Any, minimum: float, maximum: float) -> float:
     except Exception:
         number = minimum
     return max(minimum, min(maximum, number))
+
+
+def _normalize_range(
+    lo_value: Any,
+    hi_value: Any,
+    minimum: float,
+    maximum: float,
+    default_lo: float,
+    default_hi: float,
+) -> tuple[float, float]:
+    """Clamp a (lo, hi) pair to [minimum, maximum] and enforce lo <= hi.
+
+    Non-numeric inputs fall back to (default_lo, default_hi). If the clamped
+    lo exceeds hi they are swapped, so a reversed range is corrected rather
+    than rejected. Pure and Forge-independent — unit-testable in isolation.
+    """
+    try:
+        lo = float(lo_value)
+    except Exception:
+        lo = default_lo
+    try:
+        hi = float(hi_value)
+    except Exception:
+        hi = default_hi
+    lo = max(minimum, min(maximum, lo))
+    hi = max(minimum, min(maximum, hi))
+    if lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
 
 
 def _normalize_mode(value: Any) -> str:

@@ -8,7 +8,7 @@ HareSkip works by monkey-patching `Anima._forward` so selected DiT blocks-loop p
 
 The extension offers two mutually exclusive skip-decision strategies, selected with a Radio control (`Enable HareSkip` must also be on):
 
-- **HareSkip (default)** — a *stochastic* pattern generated once per generation from a skip-probability density over a trajectory coordinate `z` (a logSNR proxy computed from `t_now`: `z = 2*ln((1-t)/t)`). `p_skip(z; a)` is a sigmoid-band function of `z` and the aggressiveness slider `a`; the full step pattern is drawn up front (not decided step-by-step) because the max-skip-streak constraint needs the whole picture. Skips are pruned per rough trajectory zone (`danger` / `middle` / `safe`, 3 zones as of 2026-07-10 — see `docs/SPEC-alpha.md`) so no run of consecutive skips exceeds its zone's allowance, and the first/last ~5% of steps are always guarded (forced to full computation) regardless of probability. End-of-generation moderation is handled by the skip-probability taper, not a separate zone.
+- **HareSkip (default)** — a *stochastic* pattern generated once per generation from a skip-probability density over a trajectory coordinate `z` (a logSNR proxy computed from `t_now`: `z = 2*ln((1-t)/t)`). `p_skip(z; a)` is a sigmoid-band function of `z` and the aggressiveness slider `a`; the full step pattern is drawn up front (not decided step-by-step) because the max-skip-streak constraint needs the whole picture. Skips are pruned per rough trajectory zone (`danger` / `middle` / `safe`, 3 zones as of 2026-07-10 — see `docs/SPEC-alpha.md`) so no run of consecutive skips exceeds its zone's allowance, and only steps whose progress falls inside the user-configurable **skip window** (default `0.05–0.95`, which reproduces the former first/last-~5% guards for 30 steps) are eligible for skipping. End-of-generation moderation is handled by the skip-probability taper, not a separate zone.
 - **TeaCache (legacy)** — the original accumulator-based decision: a per-step relative-L1 distance between successive modulated inputs is mapped through a calibrated polynomial (`p_Anima(x)`) and accumulated; a step is skipped while the accumulator stays under a threshold. Includes coefficient profile presets, start/end progress windows, force-full interval, and max skip streak. This mode's numerics are unchanged from the predecessor extension — only names were renamed.
 
 Both modes share the same `first_call` / `missing_residual` safety checks (a skip is never applied before a residual exists) and the same exception-safe fallback: any error inside the skip-decision logic degrades to a full calculation rather than propagating out and losing the whole generation.
@@ -27,18 +27,24 @@ Linear/Taylor2 predictions are smoothed with EMA (`resrefine_slope_ema_smoothing
 
 In HareSkip mode, `a` (0.0–1.0, default 0.5) controls how much of the trajectory is skip-eligible and how high the skip probability rises there — it is *not* a direct skip-count dial. Because the pattern is stochastic, the same `a` and the same image seed can still draw a different pattern via the **skip seed offset**: a small reproducible "gacha re-roll" integer. The skip sampler seed is derived deterministically as `sha256(f"{image_seed}|hareskip|{offset}") mod 2**63` (never the builtin `hash()`, which is per-process salted and would break reproducibility). Same image seed + same offset always reproduces the same skip pattern; changing the offset re-rolls a new one without touching the image seed.
 
+## Skip Window and Zone Boundaries
+
+Two dual-thumb range controls further shape the pattern in HareSkip mode. **Skip window (progress)** (default `(0.05, 0.95)`, range `0.0–1.0`) sets which fraction of the trajectory is eligible for skipping: a step at progress `idx/(steps-1)` is skip-eligible only inside the window, and steps outside are forced to full computation. The default reproduces the former ~5% end guards, but the control is WYSIWYG — setting it to `(0.0, 1.0)` makes *every* step (including the last) eligible, with no hidden last-step safety net (the first step still runs full in practice as an inference necessity, independent of this window). **Zone boundaries (logSNR proxy)** (default `(-4.0, 0.0)`, range `-8.0–+8.0`) sets the `(low, high)` `z` cutoffs for the danger/middle/safe max-skip-streak zones, so you can retune how aggressively consecutive skips are pruned per trajectory region. Both use `gradio_rangeslider`'s dual-thumb slider when available and degrade to plain start/end (and low/high) sliders when it is not — see the Install requirements note below.
+
 ## Infotext Key Scheme
 
 PNG infotext / metadata keys are namespaced by which layer produced them:
 
 - `HareSkip enabled`, `HareSkip mode` — extension on/off and the active mode.
-- `Hare ...` — HareSkip-mode-only fields (method, method_version, aggressiveness, guard_count, params, skipped_steps, skip_count, skip_seed, skip_seed_offset). Present only when HareSkip mode is active.
+- `Hare ...` — HareSkip-mode-only fields (method, method_version, aggressiveness, skip_window, zone_boundaries, params, skipped_steps, skip_count, skip_seed, skip_seed_offset). Present only when HareSkip mode is active.
 - `Tea ...` — TeaCache-mode-only fields (threshold, coefficient_profile, start/end percent, max_skip_streak, force_full_interval, etc). Present only when TeaCache mode is active.
 - `ResRefine ...` — residual-prediction fields, present regardless of mode.
 
 ## Install
 
 Standard Forge Neo extension install: in the WebUI's Extensions tab, install from the git URL of this repository, or clone it directly into Forge Neo's `extensions/` directory. Restart Forge Neo after install.
+
+The only dependency (`requirements.txt`) is `gradio_rangeslider==0.0.8`, used for the dual-thumb Skip window / Zone boundaries controls. Forge Neo core already ships this package, so the requirement is normally already satisfied; if it is ever absent the UI degrades automatically to plain start/end sliders (the extension never fails to load over it).
 
 ### ui-config.json gotcha
 

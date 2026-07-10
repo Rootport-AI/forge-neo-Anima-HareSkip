@@ -645,6 +645,8 @@ def _hareskip_ensure_pattern() -> Any:
         STATE.hareskip_aggressiveness,
         skip_seed,
         STATE.hareskip_probability_model,
+        skip_window=(STATE.hareskip_window_start, STATE.hareskip_window_end),
+        zone_boundaries=(STATE.hareskip_zone_low, STATE.hareskip_zone_high),
     )
     STATE.hareskip_pattern = pattern
     info(
@@ -655,7 +657,9 @@ def _hareskip_ensure_pattern() -> Any:
         f"skip_count={pattern.skip_count} "
         f"skipped_steps={pattern.skipped_steps} "
         f"skip_seed={pattern.skip_seed} "
-        f"guard_count={pattern.guard_count} "
+        f"skip_window={pattern.skip_window[0]:.3f}..{pattern.skip_window[1]:.3f} "
+        f"zone_boundaries={pattern.zone_boundaries[0]:.2f}/{pattern.zone_boundaries[1]:.2f} "
+        f"guarded_steps={pattern.guarded_steps} "
         f"expected_skips={pattern.expected_skips_before_streak:.3f}"
     )
     return pattern

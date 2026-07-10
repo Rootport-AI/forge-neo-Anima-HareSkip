@@ -3,6 +3,16 @@
 import gradio as gr
 import modules.scripts as scripts
 
+# Forge neo core ships gradio_rangeslider==0.0.8 (with gradio 4.40.0). When the
+# dual-thumb RangeSlider is importable the skip window / zone boundaries are
+# edited with one two-thumb control each and mirrored into hidden gr.Number
+# scalars; when absent the UI degrades to plain gr.Slider pairs. Either way the
+# script arg count is identical (four scalar components in the return list).
+try:
+    from gradio_rangeslider import RangeSlider
+except ImportError:
+    RangeSlider = None
+
 from .auto_teacache import (
     AutoTeaCsvError,
     apply_auto_teacache_row_to_state,
@@ -80,6 +90,88 @@ class Script(scripts.Script):
                     precision=0,
                     elem_id="hare-skip-seed-offset",
                 )
+
+                # Skip window (progress) and Zone boundaries (logSNR proxy).
+                # CRITICAL: exactly four scalar components go into the return
+                # list (hareskip_window_start/end, hareskip_zone_low/high) so
+                # the arg count is identical in both branches.
+                #   RangeSlider present -> two visible dual-thumb sliders (NOT
+                #     in the return list) drive four hidden gr.Number mirrors.
+                #   RangeSlider absent   -> the four components ARE the visible
+                #     plain gr.Slider fallbacks (same variable names/positions).
+                if RangeSlider is not None:
+                    hareskip_window_range = RangeSlider(
+                        label="Skip window (progress)",
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=(0.05, 0.95),
+                        elem_id="hare-skip-window",
+                    )
+                    hareskip_zone_range = RangeSlider(
+                        label="Zone boundaries (logSNR proxy)",
+                        minimum=-8.0,
+                        maximum=8.0,
+                        step=0.1,
+                        value=(-4.0, 0.0),
+                        elem_id="hare-zone-boundaries",
+                    )
+                    hareskip_window_start = gr.Number(
+                        value=0.05, visible=False, elem_id="hare-skip-window-start"
+                    )
+                    hareskip_window_end = gr.Number(
+                        value=0.95, visible=False, elem_id="hare-skip-window-end"
+                    )
+                    hareskip_zone_low = gr.Number(
+                        value=-4.0, visible=False, elem_id="hare-zone-low"
+                    )
+                    hareskip_zone_high = gr.Number(
+                        value=0.0, visible=False, elem_id="hare-zone-high"
+                    )
+                    hareskip_window_range.change(
+                        fn=lambda t: (t[0], t[1]),
+                        inputs=[hareskip_window_range],
+                        outputs=[hareskip_window_start, hareskip_window_end],
+                    )
+                    hareskip_zone_range.change(
+                        fn=lambda t: (t[0], t[1]),
+                        inputs=[hareskip_zone_range],
+                        outputs=[hareskip_zone_low, hareskip_zone_high],
+                    )
+                else:
+                    hareskip_window_start = gr.Slider(
+                        label="Skip window (progress) start",
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=0.05,
+                        elem_id="hare-skip-window-start",
+                    )
+                    hareskip_window_end = gr.Slider(
+                        label="Skip window (progress) end",
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=0.95,
+                        elem_id="hare-skip-window-end",
+                    )
+                    hareskip_zone_low = gr.Slider(
+                        label="Zone boundaries (logSNR proxy) low",
+                        minimum=-8.0,
+                        maximum=8.0,
+                        step=0.1,
+                        value=-4.0,
+                        elem_id="hare-zone-low",
+                    )
+                    hareskip_zone_high = gr.Slider(
+                        label="Zone boundaries (logSNR proxy) high",
+                        minimum=-8.0,
+                        maximum=8.0,
+                        step=0.1,
+                        value=0.0,
+                        elem_id="hare-zone-high",
+                    )
+
                 hareskip_estimate_md = gr.Markdown(
                     value=_format_hareskip_estimate(0.5),
                     elem_id="hare-estimate",
@@ -370,6 +462,10 @@ class Script(scripts.Script):
             hareskip_mode,
             hareskip_aggressiveness,
             hareskip_skip_seed_offset,
+            hareskip_window_start,
+            hareskip_window_end,
+            hareskip_zone_low,
+            hareskip_zone_high,
         ]
 
     def before_process(self, p, *script_args):
@@ -405,8 +501,8 @@ class Script(scripts.Script):
         # calls this from process_images_inner ahead of images.save_image).
         # The HareSkip skip pattern is only generated lazily on the first
         # patched model forward call during sampling, so pattern-dependent
-        # infotext keys (Hare guard_count/params/skipped_steps/skip_count/
-        # skip_seed) cannot be written any earlier than this hook.
+        # infotext keys (Hare skip_window/zone_boundaries/params/skipped_steps/
+        # skip_count/skip_seed) cannot be written any earlier than this hook.
         try:
             _apply_hare_pattern_infotext(p)
         except Exception as exc:
@@ -856,7 +952,12 @@ def _apply_hare_pattern_infotext(p) -> None:
     try:
         params = _extra_generation_params(p)
         params.pop("Hare pattern", None)
-        params["Hare guard_count"] = pattern.guard_count
+        params["Hare skip_window"] = (
+            f"{pattern.skip_window[0]:.2f}-{pattern.skip_window[1]:.2f}"
+        )
+        params["Hare zone_boundaries"] = (
+            f"{pattern.zone_boundaries[0]:.1f}/{pattern.zone_boundaries[1]:.1f}"
+        )
         params["Hare params"] = _format_hare_params(pattern.params)
         params["Hare skipped_steps"] = " ".join(str(step) for step in pattern.skipped_steps)
         params["Hare skip_count"] = pattern.skip_count

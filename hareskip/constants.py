@@ -21,9 +21,11 @@ and (once wiring lands) that ``apply_options`` has a matching signature.
 
 ``script.py`` sets ``_EXPECTED_UI_ARG_COUNT`` from ``EXPECTED_UI_ARG_COUNT``
 and ``state.py`` ``apply_options`` mirrors ``UI_ARG_ORDER`` positionally. The
-three HareSkip stochastic-mode arguments (``hareskip_mode`` /
-``hareskip_aggressiveness`` / ``hareskip_skip_seed_offset``) are appended at
-the end so the original 26 positions are untouched (29 total).
+HareSkip stochastic-mode arguments (``hareskip_mode`` /
+``hareskip_aggressiveness`` / ``hareskip_skip_seed_offset``) and the
+skip-window / zone-boundary scalars (``hareskip_window_start`` /
+``hareskip_window_end`` / ``hareskip_zone_low`` / ``hareskip_zone_high``) are
+appended at the end so the original 26 positions are untouched (33 total).
 """
 
 # --- Skip-strategy mode identifiers -----------------------------------------
@@ -42,7 +44,8 @@ HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE]
 # return list, and the ``apply_options`` signature 1:1 in order and count.
 #
 # The original 26 arguments keep their positions; the three HareSkip
-# stochastic-mode arguments are appended at the end (29 total).
+# stochastic-mode arguments and the four skip-window / zone-boundary scalars
+# are appended at the end (33 total).
 UI_ARG_ORDER = [
     "enabled",
     "debug_log_enabled",
@@ -73,6 +76,10 @@ UI_ARG_ORDER = [
     "hareskip_mode",
     "hareskip_aggressiveness",
     "hareskip_skip_seed_offset",
+    "hareskip_window_start",
+    "hareskip_window_end",
+    "hareskip_zone_low",
+    "hareskip_zone_high",
 ]
 
 EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)

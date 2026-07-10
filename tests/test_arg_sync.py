@@ -86,6 +86,88 @@ def _extract_ui_return_names() -> list[str]:
     return names
 
 
+def _dummy_apply_options_args() -> list:
+    """A valid positional arg list for apply_options, in UI_ARG_ORDER order.
+
+    The last four entries (skip window / zone boundaries) are supplied by the
+    normalization tests; sensible defaults are used here.
+    """
+    return [
+        True,   # enabled
+        False,  # debug_log_enabled
+        "",     # mode
+        True,   # print_timing_log
+        False,  # verbose_diagnose_log
+        False,  # dump_resrefine_residual
+        "Custom",  # tea_preset
+        0.07,   # tea_threshold
+        0.48,   # tea_start_percent
+        0.76,   # tea_end_percent
+        "Reuse (residual only)",  # resrefine_formula
+        0.0,    # resrefine_use_prediction_after_progress
+        2,      # resrefine_apply_prediction_from_skip
+        0.5,    # resrefine_prediction_strength
+        0.25,   # resrefine_taylor2_curve_strength
+        0.0,    # resrefine_slope_ema_smoothing
+        0.0,    # resrefine_curve_ema_smoothing
+        "cuda", # resrefine_cache_device
+        state.TEA_PROFILE_DEFAULT,  # tea_coefficient_profile
+        0,      # tea_max_skip_streak
+        0,      # tea_force_full_interval
+        False,  # hareskip_dry_run
+        False,  # hareskip_verbose_trace
+        False,  # auto_teacache_enabled
+        "",     # auto_teacache_csv
+        False,  # capture_calibration_pairs
+        "HareSkip",  # hareskip_mode
+        0.5,    # hareskip_aggressiveness
+        0,      # hareskip_skip_seed_offset
+        0.05,   # hareskip_window_start
+        0.95,   # hareskip_window_end
+        -4.0,   # hareskip_zone_low
+        0.0,    # hareskip_zone_high
+    ]
+
+
+def test_apply_options_normalizes_window_clamp_and_swap():
+    args = _dummy_apply_options_args()
+    # Reversed and out-of-range window -> clamped to [0, 1] and swapped.
+    args[29] = 1.5   # hareskip_window_start (over max)
+    args[30] = -0.5  # hareskip_window_end (under min)
+    s = state.RuntimeState()
+    s.apply_options(*args)
+    # 1.5 -> 1.0, -0.5 -> 0.0, then swapped so start <= end.
+    assert s.hareskip_window_start == 0.0
+    assert s.hareskip_window_end == 1.0
+
+
+def test_apply_options_normalizes_zone_clamp_and_swap():
+    args = _dummy_apply_options_args()
+    # Reversed and out-of-range zone boundaries -> clamped to [-8, 8], swapped.
+    args[31] = 5.0    # hareskip_zone_low
+    args[32] = -9.0   # hareskip_zone_high (under min)
+    s = state.RuntimeState()
+    s.apply_options(*args)
+    # -9.0 -> -8.0, then swapped so low <= high.
+    assert s.hareskip_zone_low == -8.0
+    assert s.hareskip_zone_high == 5.0
+
+
+def test_apply_options_keeps_valid_ranges():
+    args = _dummy_apply_options_args()
+    args[29], args[30] = 0.1, 0.8
+    args[31], args[32] = -3.0, 2.0
+    s = state.RuntimeState()
+    s.apply_options(*args)
+    assert (s.hareskip_window_start, s.hareskip_window_end) == (0.1, 0.8)
+    assert (s.hareskip_zone_low, s.hareskip_zone_high) == (-3.0, 2.0)
+
+
+def test_dummy_args_length_matches_expected():
+    # Guards the dummy list against future arg-count drift.
+    assert len(_dummy_apply_options_args()) == constants.EXPECTED_UI_ARG_COUNT
+
+
 def test_ui_return_list_matches_order():
     names = _extract_ui_return_names()
     assert all(re.fullmatch(r"[A-Za-z_]\w*", n) for n in names), (

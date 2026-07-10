@@ -107,7 +107,7 @@ else:  # MODE_TEACACHE
 - `_hareskip_ensure_pattern()` が生成開始時に `STATE.hareskip_schedule_t_now` と `STATE.hareskip_image_seed` から `SkipPattern` を一括生成し `STATE.hareskip_pattern` にキャッシュ。
 - **取得失敗時は劣化**: スケジュール or image seed 欠落なら `None` を返し、`_hareskip_should_calc` はフル演算扱い。`hareskip_schedule_unavailable`（`reason=no_schedule_or_seed`）を 1 回だけ警告。
 
-### 3.4 29 引数 3 点同期
+### 3.4 33 引数 3 点同期
 
 UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argument Sync Rule」）。
 
@@ -115,7 +115,9 @@ UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argumen
 2. `RuntimeState.apply_options` の位置引数シグネチャ（順序・数）
 3. `constants.UI_ARG_ORDER`（正典の順序付き名前リスト）と `EXPECTED_UI_ARG_COUNT`（= `len(UI_ARG_ORDER)`）
 
-現在**29 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset` を追加。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
+現在**33 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset`（α版）＋ `hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`（α+1、skip window / zone boundaries のスカラーミラー）を追加。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
+
+**Skip window / Zone boundaries の UI 配線（α+1）**: `gradio_rangeslider.RangeSlider`（Forge neo core が `==0.0.8` を同梱）が import 可能なら 2 本の dual-thumb RangeSlider（`hare-skip-window`, `hare-zone-boundaries`）を可視入力ウィジェットとして置き（**return list には入れない**）、その `.change`（`lambda t: (t[0], t[1])`）で `visible=False` の 4 スカラー `gr.Number` ミラーを更新する。RangeSlider が無い環境では、この 4 コンポーネント**自体**を可視の `gr.Slider`（start/end/low/high）フォールバックとして生成する（同一変数名・同一位置）。どちらの経路でも return list に入るのは 4 スカラーのみで、引数数は 33 で不変。
 
 ---
 
@@ -152,23 +154,30 @@ p_skip(z; a) = p_cap
 
 ### 4.3 ゾーン境界と max skip streak（3 ゾーンモデル）
 
-| ゾーン | z 範囲 | max streak |
-| --- | --- | --- |
-| danger | `z < −4` | 1 |
-| middle | `−4 ≤ z < 0` | 2 |
-| safe | `z ≥ 0` | 3 |
+ゾーン境界は**ユーザー設定可能**（α+1）。UI は 1 本の dual-thumb コントロール（`(low, high)`, UI レンジ −8.0..+8.0 step 0.1, 既定 `(−4.0, 0.0)`）。既定境界での分類:
 
-実装は `skip_pattern.zone_from_z` と `ZONE_MAX_STREAK`。run がゾーン跨ぎなら許容は run 内ゾーンの `min`（最保守）。
+| ゾーン | z 範囲（既定境界） | max streak |
+| --- | --- | --- |
+| danger | `z < low`（既定 −4） | 1 |
+| middle | `low ≤ z < high`（既定 −4..0） | 2 |
+| safe | `z ≥ high`（既定 0） | 3 |
+
+実装は `skip_pattern.zone_from_z(z, boundaries=(low, high))` と `ZONE_MAX_STREAK`。`apply_max_streak_constraint(skip, z, p, zone_boundaries)` が境界を受け取る。run がゾーン跨ぎなら許容は run 内ゾーンの `min`（最保守）。境界の正規化（`[−8, 8]` クランプと `low ≤ high` の swap）は `apply_options` の責務。
 
 > **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
 
-### 4.4 ガード式
+### 4.4 Skip window（旧ガード式を置換、α+1）
+
+自動ガード規則（旧 `guard_count = max(1, round(num_steps * 0.05))`）を廃止し、**ユーザー設定可能な skip window**（progress 領域）に置き換えた。UI は 1 本の dual-thumb コントロール（`(window_start, window_end)`, レンジ 0.0..1.0, 既定 `(0.05, 0.95)`）。
 
 ```
-guard_count = max(1, round(num_steps * 0.05))
+progress_i = idx / (num_steps − 1)   # 0-based, num_steps ≥ 2
+eligible = window_start ≤ progress_i ≤ window_end
 ```
 
-先頭・末尾 `guard_count` ステップはサンプリング対象外（`p = 0.0`, `skip = False`）。30 steps → `guard_count = 2`（index 0,1,28,29 が常にフル）。実装は `skip_pattern.guard_count_for`。
+window 外のステップは強制フル（`p = 0.0`, `skip = False`）。既定 `(0.05, 0.95)` は 30 steps で旧ガード（index 0,1,28,29 がフル・`p = 0`）を厳密に再現する（`idx 1` の progress = 0.0345 < 0.05 で除外、`idx 28` の progress = 0.9655 > 0.95 で除外）。実装は `skip_pattern.generate_skip_pattern(..., skip_window=(...))` と内部の `progress_for_step` / `_draw_pattern`。`SkipPattern` は `guard_count` に代えて `skip_window` / `zone_boundaries` / `guarded_steps`（window 除外ステップ数、ログ用）を持つ。window の正規化（`[0, 1]` クランプと `start ≤ end` の swap）は `apply_options` の責務。
+
+> **2026-07-10 WYSIWYG 決定（ユーザー決定）— 隠れた末尾セーフティネット無し**: skip window は「見たまま」の挙動を持つ。UI で `(0.0, 1.0)` を設定すれば**最終ステップを含む全ステップが skip 対象**になる。旧実装のような自動末尾ガードや隠れた「最終ステップ保護」は**存在しない**——これは意図的な UX 決定である。（実運用で第 1 ステップがフルになるのは patcher の共有 `first_call` / `missing_residual` 強制フル経路によるものであり、これは推論上の必然であって UI ガードではない。この経路は skip window とは独立で、除去してはならない。）
 
 ### 4.5 streak 刈り込みアルゴリズム（`apply_max_streak_constraint`）
 
@@ -189,12 +198,12 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 
 ### 4.7 infotext キー一覧（`script.py` で確認）
 
-すべて `postprocess_image` / 生成開始フックで書き込む。pattern 実現値（`guard_count` 以下 5 キー）は pattern が最初の forward で遅延生成されるため `postprocess_image` で書き込む設計。
+すべて `postprocess_image` / 生成開始フックで書き込む。pattern 実現値（`skip_window` / `zone_boundaries` 以下のキー）は pattern が最初の forward で遅延生成されるため `postprocess_image` で書き込む設計。
 
 | モード/層 | キー |
 | --- | --- |
 | 共通（identity） | `HareSkip enabled`, `HareSkip mode` |
-| HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`（生成開始時）／`Hare guard_count`, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
+| HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`（生成開始時）／`Hare skip_window`（例 `0.05-0.95`）, `Hare zone_boundaries`（例 `-4.0/0.0`）, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
 | TeaCache モードのみ | `Tea threshold`, `Tea progress`, `Tea coefficient_profile`, `Tea max_skip_streak`, `Tea force_full_interval`, `Tea shift`, `Tea modulated_source`, `Tea capture_pairs`, `Tea auto_row_index`, `Tea auto_row_name` |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
 

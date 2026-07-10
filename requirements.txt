@@ -1,0 +1,9 @@
+# HareSkip runtime dependencies.
+#
+# Forge neo core already ships gradio_rangeslider==0.0.8 (with gradio 4.40.0),
+# so this pin is normally already satisfied in the target environment. The
+# dual-thumb Skip window / Zone boundaries controls use it when present; when
+# it is absent the UI degrades gracefully to plain gr.Slider pairs (the script
+# argument count is identical either way), so this dependency is effectively
+# optional and never blocks the extension from loading.
+gradio_rangeslider==0.0.8

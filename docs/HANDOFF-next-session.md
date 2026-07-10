@@ -25,7 +25,7 @@
 | `5520a92` | docs: README/AGENTS/CHANGELOG/NOTICE を HareSkip 用に書き直し（= HEAD） |
 
 - **テスト**: `pytest tests/ -q` → **52 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py`）。gradio/Forge を import せず実行可能。
-- **済み**: 純粋モジュール実装・単体テスト、モードディスパッチ、スケジュール捕捉ヘルパ、UI 再構成、29 引数 3 点同期、infotext 分割、docs 一式。
+- **済み**: 純粋モジュール実装・単体テスト、モードディスパッチ、スケジュール捕捉ヘルパ、UI 再構成、33 引数 3 点同期（α+1 で skip window / zone boundaries の 4 スカラーを追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、infotext 分割、docs 一式。
 - **未**: 実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性）。§3 のチェックリストが対象。
 
 ---
@@ -38,8 +38,8 @@
 | --- | --- |
 | `scripts/hareskip.py` | Forge エントリ（3 行 re-export）。 |
 | `hareskip/__init__.py` | パッケージ初期化。 |
-| `hareskip/constants.py` | **純粋**。モード ID、`UI_ARG_ORDER`（29）、`EXPECTED_UI_ARG_COUNT`。 |
-| `hareskip/skip_pattern.py` | **純粋**。stochastic pattern 生成（z, ゾーン, guard, streak 刈り込み, seed 導出, exact-target）。 |
+| `hareskip/constants.py` | **純粋**。モード ID、`UI_ARG_ORDER`（33）、`EXPECTED_UI_ARG_COUNT`。 |
+| `hareskip/skip_pattern.py` | **純粋**。stochastic pattern 生成（z, ユーザー設定可能ゾーン境界, skip window, streak 刈り込み, seed 導出, exact-target）。 |
 | `hareskip/probability_models.py` | **純粋**。`p_skip` レジストリ。`sigmoid_band_v0.1` 組み込み。 |
 | `hareskip/script.py` | Gradio UI（`ui()`）と生成時フック、infotext 書き込み。 |
 | `hareskip/state.py` | 設定スナップショット、`RuntimeState`、`TEA_PRESET_REGISTRY`、`apply_options`。 |
@@ -68,7 +68,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 4. **再現性**: 同一 image seed + 同一 offset で同一 `Hare skipped_steps` / `Hare skip_seed` になるか。
 5. **offset 変更で別 pattern**: offset を変えると別 `skipped_steps` になるか（同一 image seed のまま引き直し）。
 6. **TeaCache モードが旧 UjiCache と同一挙動**: TeaCache モードに切替え、同条件で旧 UjiCache とビット同一の skip 挙動・画質か。
-7. **PNG infotext**: 保存画像メタデータに `Hare skipped_steps` / `Hare skip_count` / `Hare skip_seed` / `Hare guard_count` / `Hare params` 等が入るか（`postprocess_image` 書き込み）。
+7. **PNG infotext**: 保存画像メタデータに `Hare skipped_steps` / `Hare skip_count` / `Hare skip_seed` / `Hare skip_window` / `Hare zone_boundaries` / `Hare params` 等が入るか（`postprocess_image` 書き込み）。
+8. **RangeSlider レンダリング**: HareSkip グループに dual-thumb の「Skip window (progress)」（`hare-skip-window`）と「Zone boundaries (logSNR proxy)」（`hare-zone-boundaries`）が表示され、両端つまみで値を動かすと `Hare skip_window` / `Hare zone_boundaries` infotext に反映されるか（RangeSlider → 隠し `gr.Number` ミラー → `apply_options` の経路）。Forge neo core は `gradio_rangeslider==0.0.8` を同梱するため通常この経路で描画される。フォールバック（RangeSlider 不在時のプレーン Slider 4 本）は**わざわざ検証用にアンインストールする必要は無い**——両経路はコードに実装済みで、引数数は 33 で不変（`tests/test_arg_sync.py` が静的に保証）。RangeSlider 版の window / zones を動かしたとき infotext が変化すれば配線は正しい。
 
 ---
 
@@ -76,7 +77,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 
 - **スケジュール捕捉失敗時**: §3-1 の通り `_candidate_sigma_sources` に実機で有効な属性パスを追加。復元値は全て有限かつ `(0,1)` 内でなければ `None` 扱いになる点に注意（範囲外なら sigma→t 前提が崩れている）。
 - **較正（`p_cap(a)` / `z_enter(a)` 調整）**: `probability_models.py` に**新バージョン `sigmoid_band_v0.2` を登録して切り替える**。**v0.1 は書き換えない**。手順: `register("sigmoid_band_v0.2", NewModel())` → `STATE.hareskip_probability_model` を新名に。`skip_pattern.py` は名前で lookup するため変更不要（`generate_skip_pattern(..., probability_model=...)`）。a=1.0 が skip 数不足なら `p_cap` 上限や `z_enter` の負方向拡張を検討。
-- **streak 刈り込みが強すぎる場合**: `apply_max_streak_constraint` は run 内 `(p,z,index)` 最小をフルに戻す。`expected_skips_before_streak`（刈り込み前 p 総和）と実 `skip_count` の乖離が大きすぎるなら `ZONE_MAX_STREAK`（danger=1 / middle=2 / safe=3 の 3 ゾーンモデル、2026-07-10 に final ゾーンを廃止済み。§ 下記および `docs/SPEC-alpha.md` §4.3 参照）や safe=3 の緩和を検討。刈り込みは決定論なので同一入力で再現する。
+- **streak 刈り込みが強すぎる場合**: `apply_max_streak_constraint` は run 内 `(p,z,index)` 最小をフルに戻す。`expected_skips_before_streak`（刈り込み前 p 総和）と実 `skip_count` の乖離が大きすぎるなら `ZONE_MAX_STREAK`（danger=1 / middle=2 / safe=3 の 3 ゾーンモデル、2026-07-10 に final ゾーンを廃止済み。§ 下記および `docs/SPEC-alpha.md` §4.3 参照）や safe=3 の緩和を検討。刈り込みは決定論なので同一入力で再現する。**α+1 以降、ゾーン境界 `(low, high)` は UI から調整可能**（既定 `(−4.0, 0.0)`、`hare-zone-boundaries` の dual-thumb）。境界を動かせば各ステップのゾーン分類 → 許容 streak が変わるので、コードを触らず実機で刈り込み強度を較正できる。
+- **skip window の調整（α+1）**: skip 対象の progress 範囲は UI の「Skip window (progress)」（`hare-skip-window`、既定 `(0.05, 0.95)`）で調整可能。序盤・終盤をより広く/狭く skip 対象にしたければ window を広げ/狭める。**隠れた末尾セーフティネットは無い**（WYSIWYG、2026-07-10 ユーザー決定）: window を `(0.0, 1.0)` にすれば最終ステップも skip 対象になる（第 1 ステップは patcher の `first_call` 強制フルで実運用上フルのまま——これは window とは独立）。旧 `guard_count` 相当は既定 window で再現される。
 - **skip-probability taper の再較正（将来課題・ユーザー決定）**: 2026-07-10 に旧 final ゾーン（`z ≥ 4` で streak=1 に絞る「最終仕上げ保護」）を廃止し、danger/middle/safe の 3 ゾーンに統合した（層別再分析で final 帯域の密度低下が選択バイアスと判明したため、定量的裏付けが無いと判断）。生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit`）**のみ**が担う設計に戻った。taper 自体は温存するが、**その較正方法（`z_exit(a)` / `tau_exit` の値）は現行データでは正当化できず、新規データによる再較正が必要**——これはユーザー決定であり、次セッション以降の作業対象。較正に使えるデータが揃うまでは v0.1 の値のまま据え置く。
 
 ---
