@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from . import __version__
+from .constants import MODE_HARESKIP
 from .diagnostics import log_cond_trace
+from .forge_introspection import sampling_schedule_t_now
 from .logging import exception, info
 from .model_detect import detect_model
 from .patcher import remove_all_patches
@@ -51,9 +53,32 @@ def on_cfg_denoiser(params) -> None:
             return
         step_start()
         log_cond_trace(params)
+        _capture_hareskip_schedule(params)
     except Exception as exc:
         STATE.set_error(f"cfg denoiser callback failed: {exc}")
         exception("cfg denoiser callback failed")
+
+
+def _capture_hareskip_schedule(params) -> None:
+    """Best-effort, once-per-generation capture of the sigma->t_now schedule.
+
+    Only relevant in HareSkip mode. Isolated in its own try/except so a
+    schedule-probing failure can never break the denoiser callback; the
+    patcher degrades to full compute (with a one-time warning) when the
+    schedule stays unavailable.
+    """
+    if STATE.hareskip_mode != MODE_HARESKIP:
+        return
+    if STATE.hareskip_schedule_t_now is not None:
+        return
+    try:
+        t_now = sampling_schedule_t_now(params)
+        if t_now:
+            STATE.hareskip_schedule_t_now = t_now
+    except Exception:
+        # Never propagate — leave the schedule unavailable for a graceful
+        # full-compute fallback in the patcher.
+        pass
 
 
 def on_cfg_after_cfg(params) -> None:

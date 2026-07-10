@@ -231,3 +231,105 @@ def _safe_number(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _sigma_sequence_to_list(sigmas: Any) -> list[float] | None:
+    """Convert a 1-D sigma tensor/sequence into a plain list of floats.
+
+    Returns None unless at least two finite values are recovered. Any
+    non-1-D object (scalar sigma, matrix) is rejected so the current-step
+    ``params.sigma`` scalar cannot be mistaken for a whole schedule.
+    """
+    import math
+
+    if sigmas is None:
+        return None
+    try:
+        # 1-D check: a scalar current-step sigma has ndim 0 or length 1.
+        ndim = getattr(sigmas, "ndim", None)
+        if ndim is not None and int(ndim) != 1:
+            return None
+        if hasattr(sigmas, "detach"):
+            sigmas = sigmas.detach()
+        if hasattr(sigmas, "tolist"):
+            values = sigmas.tolist()
+        else:
+            values = list(sigmas)
+    except Exception:
+        return None
+    if not isinstance(values, (list, tuple)) or len(values) < 2:
+        return None
+    out: list[float] = []
+    for item in values:
+        try:
+            number = float(item)
+        except Exception:
+            return None
+        if not math.isfinite(number):
+            return None
+        out.append(number)
+    return out
+
+
+def _candidate_sigma_sources(params: Any) -> list[Any]:
+    """Best-effort list of objects that might carry the full sigma schedule.
+
+    Ordered by reliability: the cfg_denoiser callback params first, then the
+    denoiser/sampler reachable from it or from shared runtime state.
+    """
+    sources: list[Any] = []
+
+    # (a) attributes directly on the cfg_denoiser callback params object.
+    for name in ("sigmas", "sigma_schedule", "all_sigmas"):
+        sources.append(_safe_getattr(params, name))
+
+    # (b) the CFGDenoiser wrapped by the callback params, and its sampler.
+    denoiser = _safe_getattr(params, "denoiser")
+    for host in (denoiser, _safe_getattr(denoiser, "sampler")):
+        for name in ("sigmas", "sigma_schedule", "all_sigmas"):
+            sources.append(_safe_getattr(host, name))
+
+    # (c) shared runtime state, where Forge/A1111 often stashes the schedule.
+    try:
+        from modules import shared
+
+        state = _safe_getattr(shared, "state")
+        for name in ("sigmas", "sigma_schedule"):
+            sources.append(_safe_getattr(state, name))
+    except Exception:
+        pass
+
+    return sources
+
+
+def sampling_schedule_t_now(params: Any) -> list[float] | None:
+    """Recover the full per-model-step flow-time (t_now) schedule.
+
+    In Forge neo Anima the predictor is ``PredictionDiscreteFlow`` with
+    ``multiplier == 1.0``, so ``timestep(sigma) == sigma`` and each sigma IS
+    the flow time ``t`` in ``(0, 1]``. We therefore map ``t_now = float(sigma)``
+    directly.
+
+    The number of MODEL CALLS equals ``len(sigmas) - 1`` (schedules include a
+    trailing 0.0 boundary sigma with no model step), so a trailing 0.0 is
+    dropped and the result has one entry per model step, aligned to the
+    ``STATE.denoiser_calls - 1`` step index used by the patcher.
+
+    All recovered t_now values must be finite and strictly inside ``(0, 1)``;
+    if any falls outside that range the schedule is treated as unavailable
+    (returns None) so the logSNR proxy never sees garbage. Returns None when
+    no source yields >= 2 usable sigma values.
+    """
+    for source in _candidate_sigma_sources(params):
+        sigmas = _sigma_sequence_to_list(source)
+        if sigmas is None:
+            continue
+        # Drop a trailing boundary 0.0 (schedules commonly end at sigma=0).
+        if abs(sigmas[-1]) <= 1e-12:
+            sigmas = sigmas[:-1]
+        if len(sigmas) < 1:
+            continue
+        t_now = [float(s) for s in sigmas]
+        if all(0.0 < t < 1.0 for t in t_now) and len(t_now) >= 1:
+            return t_now
+    return None

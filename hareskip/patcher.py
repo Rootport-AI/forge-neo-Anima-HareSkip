@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .constants import MODE_HARESKIP
 from .logging import info, warning
+from .skip_pattern import derive_skip_seed, generate_skip_pattern
 from .state import (
     STATE,
     RESREFINE_CACHE_DEVICE_CPU,
@@ -111,6 +113,7 @@ def _apply_hareskip_patch() -> PatchResult:
     info(
         "applied experimental patch kind=hareskip "
         f"target=backend.nn.anima.Anima.{target_name} "
+        f"mode={STATE.hareskip_mode} "
         f"formula={STATE.resrefine_formula} "
         f"threshold={STATE.tea_threshold:.4f} "
         f"progress={STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f} "
@@ -201,38 +204,62 @@ def _hareskip_forward_body(
     t_embedding_B_T_D = model.t_embedding_norm(t_embedding_B_T_D)
 
     cache_device = _resrefine_cache_device(x_B_T_H_W_D)
-    modulated_inp = _tea_modulated_input(
-        model,
-        t_embedding_B_T_D,
-        adaln_lora_B_T_3D,
-        cache_device,
-    )
     cache = _hareskip_state_for_model(model)
     batch_per_slot = _batch_per_slot(x_B_T_H_W_D, cond_or_uncond)
     step_index = max(0, STATE.denoiser_calls - 1)
     progress = _progress(step_index)
 
-    rels: dict[Any, float | None] = {}
-    slot_should_calc: dict[Any, bool] = {}
-    for slot_index, key in enumerate(cond_or_uncond):
-        key = int(key)
-        item = _hareskip_slot(cache, key)
-        modulated_slice = modulated_inp[
-            slot_index * batch_per_slot : (slot_index + 1) * batch_per_slot
-        ]
-        rels[key] = _tea_update_slot(item, modulated_slice)
-        slot_should_calc[key] = bool(item["should_calc"])
+    # HareSkip mode skips the modulated-input + rel_l1 computation entirely
+    # unless calibration capture (a tea-oriented debug feature) forces a full
+    # calc every step and needs rel_l1. TeaCache mode always computes it.
+    hareskip_mode = STATE.hareskip_mode == MODE_HARESKIP
+    compute_rel_l1 = (not hareskip_mode) or STATE.calibration_capture_active()
 
-    force_full_reason = _tea_force_full_reason(
-        cache,
-        step_index,
-        progress,
-        cond_or_uncond,
-    )
-    should_calc = force_full_reason is not None or any(slot_should_calc.values())
-    if STATE.calibration_capture_active() and not should_calc:
-        should_calc = True
-        force_full_reason = "calibration_capture"
+    rels: dict[Any, float | None] = {}
+    if compute_rel_l1:
+        modulated_inp = _tea_modulated_input(
+            model,
+            t_embedding_B_T_D,
+            adaln_lora_B_T_3D,
+            cache_device,
+        )
+        slot_should_calc: dict[Any, bool] = {}
+        for slot_index, key in enumerate(cond_or_uncond):
+            key = int(key)
+            item = _hareskip_slot(cache, key)
+            modulated_slice = modulated_inp[
+                slot_index * batch_per_slot : (slot_index + 1) * batch_per_slot
+            ]
+            rels[key] = _tea_update_slot(item, modulated_slice)
+            slot_should_calc[key] = bool(item["should_calc"])
+
+    if hareskip_mode:
+        # Shared force-full (first_call / missing_residual) is evaluated FIRST
+        # so a skip can never be applied before residuals exist.
+        shared_force = _shared_force_full_reason(cache, cond_or_uncond)
+        if STATE.calibration_capture_active():
+            # Capture forces full calc every step and warns once that it is a
+            # tea-oriented feature while in HareSkip mode.
+            _warn_calibration_capture_hareskip()
+            should_calc = True
+            force_full_reason = shared_force or "calibration_capture"
+        else:
+            should_calc = (shared_force is not None) or _hareskip_should_calc(
+                step_index
+            )
+            force_full_reason = shared_force
+    else:
+        force_full_reason = _tea_force_full_reason(
+            cache,
+            step_index,
+            progress,
+            cond_or_uncond,
+        )
+        should_calc = force_full_reason is not None or any(slot_should_calc.values())
+        if STATE.calibration_capture_active() and not should_calc:
+            should_calc = True
+            force_full_reason = "calibration_capture"
+
     if STATE.hareskip_dry_run and not should_calc:
         STATE.hareskip_dry_run_predictions += 1
         should_calc = True
@@ -574,6 +601,117 @@ def _tea_force_full_reason(
     if max_skip_streak > 0 and int(cache.get("skip_streak", 0)) >= max_skip_streak:
         return "max_skip_streak"
     return None
+
+
+def _shared_force_full_reason(
+    cache: dict[str, Any],
+    cond_or_uncond: Any,
+) -> str | None:
+    """Force-full reasons shared by both modes, evaluated before any skip.
+
+    These mirror the first_call / missing_residual checks at the top of
+    ``_tea_force_full_reason`` exactly so HareSkip mode inherits the same
+    safety guarantees (a skip is never applied before residuals exist). Tea
+    mode keeps using its own combined ``_tea_force_full_reason`` so its
+    numerics stay textually unchanged.
+    """
+    if STATE.hareskip_model_calls == 1:
+        return "first_call"
+    for key in cond_or_uncond:
+        if _hareskip_slot(cache, int(key)).get("previous_residual") is None:
+            return "missing_residual"
+    return None
+
+
+def _hareskip_ensure_pattern() -> Any:
+    """Return the per-generation SkipPattern, generating it once on demand.
+
+    Returns None when the schedule or image seed is unavailable (the caller
+    then degrades to full compute). Any exception here is the caller's
+    responsibility to contain — this helper is only ever invoked from within
+    ``_hareskip_should_calc``, which wraps the whole thing in try/except.
+    """
+    if STATE.hareskip_pattern is not None:
+        return STATE.hareskip_pattern
+    t_now_list = STATE.hareskip_schedule_t_now
+    if not t_now_list or STATE.hareskip_image_seed is None:
+        return None
+    skip_seed = derive_skip_seed(
+        STATE.hareskip_image_seed,
+        STATE.hareskip_skip_seed_offset,
+    )
+    pattern = generate_skip_pattern(
+        t_now_list,
+        STATE.hareskip_aggressiveness,
+        skip_seed,
+        STATE.hareskip_probability_model,
+    )
+    STATE.hareskip_pattern = pattern
+    info(
+        "hareskip_pattern="
+        f"model={pattern.probability_model} "
+        f"aggressiveness={pattern.aggressiveness:.3f} "
+        f"num_steps={pattern.num_steps} "
+        f"skip_count={pattern.skip_count} "
+        f"skipped_steps={pattern.skipped_steps} "
+        f"skip_seed={pattern.skip_seed} "
+        f"guard_count={pattern.guard_count} "
+        f"expected_skips={pattern.expected_skips_before_streak:.3f}"
+    )
+    return pattern
+
+
+def _hareskip_should_calc(step_index: int) -> bool:
+    """HareSkip per-step decision: True to compute fully, False to skip.
+
+    The whole body is wrapped in try/except and returns True on any error,
+    logging it at most once. It MUST NOT propagate — the outer patched forward
+    falls back to the original Anima forward on any exception, and HareSkip
+    decision logic must never trigger that path.
+    """
+    try:
+        pattern = _hareskip_ensure_pattern()
+        if pattern is None:
+            if not STATE.hareskip_schedule_warned:
+                STATE.hareskip_schedule_warned = True
+                warning(
+                    "hareskip_schedule_unavailable "
+                    "reason=no_schedule_or_seed; falling back to full compute"
+                )
+            return True
+        skip = pattern.skip
+        if step_index < 0 or step_index >= len(skip):
+            return True
+        if STATE.hareskip_verbose_trace:
+            info(
+                "hareskip_step="
+                f"step={step_index} z={pattern.z_by_step[step_index]:.4f} "
+                f"p={pattern.p_by_step[step_index]:.4f} "
+                f"skip={bool(skip[step_index])}"
+            )
+        return not skip[step_index]
+    except Exception as exc:
+        STATE.hareskip_errors += 1
+        if STATE.hareskip_logged_calls < 12:
+            STATE.hareskip_logged_calls += 1
+            warning(f"hareskip_should_calc_failed reason={_short_error(exc)}")
+        return True
+
+
+def _warn_calibration_capture_hareskip() -> None:
+    """Warn once that calibration capture is a tea-oriented debug feature.
+
+    Mirrors the existing requires-enable warning style; the capture path still
+    works (it forces full compute every step) but is not meaningful for the
+    HareSkip stochastic decision.
+    """
+    if "calibration_capture_hareskip_mode" in STATE.calibration_capture_warned_reasons:
+        return
+    STATE.calibration_capture_warned_reasons.add("calibration_capture_hareskip_mode")
+    warning(
+        "calibration_capture_tea_oriented "
+        "reason=hareskip_mode; forcing full compute every step for capture"
+    )
 
 
 def _resrefine_apply_residual(

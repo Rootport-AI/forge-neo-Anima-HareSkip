@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any
+from typing import Any, Optional
+
+from .constants import MODE_HARESKIP, MODE_TEACACHE, HARESKIP_MODES
 
 
 MODE_OFF = ""
@@ -258,6 +260,21 @@ class RuntimeState:
     hareskip_verbose_trace: bool = False
     capture_calibration_pairs: bool = False
 
+    # HareSkip stochastic-mode configuration and per-generation pattern state.
+    # These are set programmatically for now (default HareSkip mode); the UI
+    # commit will wire hareskip_mode / hareskip_aggressiveness /
+    # hareskip_skip_seed_offset into apply_options.
+    hareskip_mode: str = MODE_HARESKIP
+    hareskip_aggressiveness: float = 0.5
+    hareskip_skip_seed_offset: int = 0
+    hareskip_probability_model: str = "sigmoid_band_v0.1"
+    hareskip_image_seed: Optional[int] = None
+    # Per-step flow-time (t_now) schedule captured for this generation.
+    hareskip_schedule_t_now: Optional[list] = None
+    # The generated SkipPattern for this generation (skip_pattern.SkipPattern).
+    hareskip_pattern: Any = None
+    hareskip_schedule_warned: bool = False
+
     auto_teacache_enabled: bool = False
     auto_teacache_csv: str = ""
     auto_teacache_active: bool = False
@@ -466,6 +483,10 @@ class RuntimeState:
         self.hareskip_num_blocks = None
         self.hareskip_unavailable_reason = None
         self.hareskip_fallback_reasons.clear()
+        self.hareskip_image_seed = None
+        self.hareskip_schedule_t_now = None
+        self.hareskip_pattern = None
+        self.hareskip_schedule_warned = False
         self.tensor_dump_run_dir = None
         self.tensor_dump_initialized = False
         self.tensor_dump_records = 0

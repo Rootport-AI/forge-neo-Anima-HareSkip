@@ -611,6 +611,7 @@ def _begin_generation(p, script_args, source: str) -> None:
         return
 
     start_sampling(source)
+    _capture_hareskip_image_seed(p)
     try:
         STATE.generation_steps = int(getattr(p, "steps", 0) or 0) or None
     except Exception:
@@ -650,6 +651,42 @@ def _begin_generation(p, script_args, source: str) -> None:
     _check_profile_shift_match()
     _apply_infotext_metadata(p)
     log_generation_start(p)
+
+
+def _capture_hareskip_image_seed(p) -> None:
+    """Record the concrete image seed of the current job for HareSkip.
+
+    The patched Anima forward cannot see the processing object ``p``, so the
+    seed that drives the reproducible skip pattern must be captured here at
+    generation start. Forge resolves any random (-1) seed into ``p.all_seeds``
+    before sampling begins, so ``all_seeds[0]`` is the most reliable concrete
+    seed for the current job (mirrors how Auto Tea reads ``p.all_seeds``).
+    We prefer it; fall back to ``p.seed`` when the list is absent. A seed that
+    is still unresolved (-1/None) leaves ``hareskip_image_seed`` as None, in
+    which case pattern generation is skipped and the run degrades to full
+    compute — deriving a skip seed from a placeholder 0 would break the
+    reproducibility contract.
+    """
+    try:
+        seed_value = None
+        all_seeds = getattr(p, "all_seeds", None)
+        if all_seeds:
+            try:
+                candidate = int(all_seeds[0])
+                if candidate >= 0:
+                    seed_value = candidate
+            except Exception:
+                seed_value = None
+        if seed_value is None:
+            try:
+                candidate = int(getattr(p, "seed", -1))
+                if candidate >= 0:
+                    seed_value = candidate
+            except Exception:
+                seed_value = None
+        STATE.hareskip_image_seed = seed_value
+    except Exception:
+        STATE.hareskip_image_seed = None
 
 
 def _apply_infotext_metadata(p) -> None:
