@@ -1,0 +1,487 @@
+{
+  "description": "UjiCache Coefficient profile presets (deg=4). Fixed: 30 steps / 1536x1536 / CFG4 / anima_baseV10 / first_block_shift / threshold 0.07. Simple+Shift1 excluded (x near-constant). Each preset must be used with its fit_lo..fit_hi step window (set UjiCache Start/End progress accordingly).",
+  "generated": "2026-06-13",
+  "count": 24,
+  "presets": [
+    {
+      "name": "ER-SDE-Beta_30steps_Shift1_aggressive(fit2-27step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        20870041.428504474,
+        -1035486.54180697,
+        17603.72641341233,
+        -128.73841957973954,
+        0.5248595690757618
+      ],
+      "rmse": 0.03531
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift1_balanced(fit6-22step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "balanced",
+      "fit_lo": 6,
+      "fit_hi": 22,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        200182946.07957616,
+        -13119216.129569372,
+        318281.76088353037,
+        -3391.964647805656,
+        13.495812557199903
+      ],
+      "rmse": 0.0138
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift1_optimal(fit11-18step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "optimal",
+      "fit_lo": 11,
+      "fit_hi": 18,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -3046316025.6217012,
+        230984540.5397094,
+        -6555910.571639007,
+        82538.33363236971,
+        -388.8191463397488
+      ],
+      "rmse": 0.00752
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift2_aggressive(fit2-27step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -2614389.1405815254,
+        10920.93184366024,
+        3036.100525221478,
+        -56.09151064031585,
+        0.3433722071516297
+      ],
+      "rmse": 0.05851
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift2_balanced(fit7-24step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "balanced",
+      "fit_lo": 7,
+      "fit_hi": 24,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -2817647.979916507,
+        227511.74600662847,
+        -5838.401698055745,
+        56.10574150576279,
+        -0.10133103032967061
+      ],
+      "rmse": 0.01806
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift2_optimal(fit12-21step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "optimal",
+      "fit_lo": 12,
+      "fit_hi": 21,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        24396529.365165867,
+        -1681764.8074458963,
+        43437.05906928717,
+        -500.0356189466142,
+        2.222156182641241
+      ],
+      "rmse": 0.00636
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift3_aggressive(fit2-27step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        633088.7404623311,
+        -70130.49788449529,
+        2787.42902427481,
+        -41.620894905058606,
+        0.2581064169845272
+      ],
+      "rmse": 0.04762
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift3_balanced(fit8-24step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "balanced",
+      "fit_lo": 8,
+      "fit_hi": 24,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        3495295.7712097946,
+        -211825.07806675878,
+        4734.462702493498,
+        -47.98347778390063,
+        0.2485471655224362
+      ],
+      "rmse": 0.01132
+    },
+    {
+      "name": "ER-SDE-Beta_30steps_Shift3_optimal(fit14-22step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "optimal",
+      "fit_lo": 14,
+      "fit_hi": 22,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        5088727.742530627,
+        -359887.3234944483,
+        9494.71732083433,
+        -111.57649673251274,
+        0.5483313501809356
+      ],
+      "rmse": 0.00759
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift2_aggressive(fit2-27step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 2,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        39102112.026053846,
+        -2318082.0617386415,
+        51392.344907187115,
+        -502.48805779661876,
+        1.8619651883977906
+      ],
+      "rmse": 0.01964
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift2_balanced(fit6-25step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 2,
+      "mode": "balanced",
+      "fit_lo": 6,
+      "fit_hi": 25,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        23681509.071739938,
+        -1306538.8400072563,
+        27262.418554592794,
+        -255.7529086014123,
+        0.9534489360323399
+      ],
+      "rmse": 0.00861
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift2_optimal(fit10-23step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 2,
+      "mode": "optimal",
+      "fit_lo": 10,
+      "fit_hi": 23,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -1407644.652502646,
+        99616.97324952048,
+        -2004.5239581243582,
+        12.386900591770305,
+        0.04077433508697838
+      ],
+      "rmse": 0.00639
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift3_aggressive(fit2-27step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 3,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        8284353.06193094,
+        -551831.3883056089,
+        13354.156032515975,
+        -137.43051017862464,
+        0.5463250234356548
+      ],
+      "rmse": 0.01752
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift3_balanced(fit7-26step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 3,
+      "mode": "balanced",
+      "fit_lo": 7,
+      "fit_hi": 26,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        3190536.431767993,
+        -190485.32545561742,
+        4341.688228815269,
+        -44.87145703832903,
+        0.22016077772870743
+      ],
+      "rmse": 0.0085
+    },
+    {
+      "name": "ER-SDE-Simple_30steps_Shift3_optimal(fit12-24step)",
+      "sampler": "ER-SDE",
+      "scheduler": "Simple",
+      "shift": 3,
+      "mode": "optimal",
+      "fit_lo": 12,
+      "fit_hi": 24,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        4971804.351014275,
+        -292598.00657492253,
+        6516.5694706091335,
+        -65.240199323566,
+        0.290659670461512
+      ],
+      "rmse": 0.00718
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift1_aggressive(fit2-27step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        11929119.677434778,
+        -463763.78124246205,
+        4032.826670335884,
+        13.787806744866383,
+        -0.05819449599836593
+      ],
+      "rmse": 0.04856
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift1_balanced(fit6-22step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "balanced",
+      "fit_lo": 6,
+      "fit_hi": 22,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        131636494.93557017,
+        -8205633.993442775,
+        186457.8220189453,
+        -1822.126502201342,
+        6.4700841745638025
+      ],
+      "rmse": 0.01772
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift1_optimal(fit10-17step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 1,
+      "mode": "optimal",
+      "fit_lo": 10,
+      "fit_hi": 17,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -1980480799.2037754,
+        151799126.6493625,
+        -4358279.328270996,
+        55549.07004802356,
+        -265.1561879995355
+      ],
+      "rmse": 0.00651
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift2_aggressive(fit2-27step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -4855098.590777344,
+        166376.81147842054,
+        -1004.6836785374982,
+        -8.261819559097047,
+        0.10212622887564968
+      ],
+      "rmse": 0.06011
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift2_balanced(fit6-23step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "balanced",
+      "fit_lo": 6,
+      "fit_hi": 23,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        5961994.036980679,
+        -313824.8564017251,
+        6039.27168697529,
+        -51.75556189162014,
+        0.20596269199248698
+      ],
+      "rmse": 0.01253
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift2_optimal(fit11-19step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 2,
+      "mode": "optimal",
+      "fit_lo": 11,
+      "fit_hi": 19,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -6415391.142441988,
+        449560.9302189869,
+        -11537.67025327111,
+        127.9371079638685,
+        -0.48462846605011906
+      ],
+      "rmse": 0.00721
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift3_aggressive(fit2-27step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "aggressive",
+      "fit_lo": 2,
+      "fit_hi": 27,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        -2144622.6563445744,
+        120746.33040078155,
+        -1915.8586366851887,
+        8.242200354949615,
+        0.03828979084201344
+      ],
+      "rmse": 0.0466
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift3_balanced(fit8-24step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "balanced",
+      "fit_lo": 8,
+      "fit_hi": 24,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        3253531.569517961,
+        -191214.11588000128,
+        4062.086583316588,
+        -37.40909154427277,
+        0.1594626949735595
+      ],
+      "rmse": 0.01054
+    },
+    {
+      "name": "Euler-Beta_30steps_Shift3_optimal(fit13-21step)",
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "shift": 3,
+      "mode": "optimal",
+      "fit_lo": 13,
+      "fit_hi": 21,
+      "degree": 4,
+      "threshold": 0.07,
+      "steps": 30,
+      "coefficients": [
+        409105.2158414339,
+        -34196.33629136863,
+        1109.5681200097883,
+        -16.05960638388326,
+        0.11545517747079355
+      ],
+      "rmse": 0.00678
+    }
+  ]
+}

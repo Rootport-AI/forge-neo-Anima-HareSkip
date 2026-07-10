@@ -1,0 +1,58 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+
+# Stable Diffusion / Forge generated output and heavyweight assets
+outputs/
+output/
+models/
+embeddings/
+hypernetworks/
+localizations/
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+*.onnx
+
+# Test and benchmark artifacts
+analysis/
+benchmarks/results/
+profile/
+profiles/
+*.prof
+*.trace
