@@ -31,7 +31,7 @@ S:\30_OriginalApps\16_HareSkip\ER SDE-Beta 30steps Shift3
 上記結論から、HareSkip（High-Adaptive Regime-based Extrapolation Skip）は以下を採用する。
 
 - **確率的スキップ密度**: 軌道座標 `z`（logSNR proxy）上の滑らかな確率密度 `p_skip(z; a)` から skip step を抽選する。硬い段差状の位相境界で決めない。
-- **ゾーン依存 max skip streak**: 序盤・中盤・終盤の位相分類は確率ではなく「連続スキップ長の上限」に使う。danger / middle / safe / final の各ゾーンで許容 streak を変える。
+- **ゾーン依存 max skip streak**: 序盤・中盤・終盤の位相分類は確率ではなく「連続スキップ長の上限」に使う。danger / middle / safe の 3 ゾーンで許容 streak を変える（旧 final ゾーンは 2026-07-10 に廃止、§4.3 参照）。生成終盤の減速は skip-probability taper が担う。
 - **ガチャ前提の分布平均での優位性**: pattern は stochastic に生成され、同じ条件でも生成ごとに少し異なる。単発ベストではなく「分布として平均的に安全」を狙う。`skip seed offset` により同一画像 seed のまま pattern を引き直せる。
 
 top-K の deterministic 選択、prompt/seed 過適合、軽量 NN 生成は不採用（設計書 §基本方針を参照）。
@@ -150,16 +150,17 @@ p_skip(z; a) = p_cap
 
 実装は `probability_models.SigmoidBandV0_1`。返り値は `[0, 1]` にクランプ。`METHOD_NAME = "HareSkipStochasticDensity"`、`METHOD_VERSION = "0.1"`。
 
-### 4.3 ゾーン境界と max skip streak
+### 4.3 ゾーン境界と max skip streak（3 ゾーンモデル）
 
 | ゾーン | z 範囲 | max streak |
 | --- | --- | --- |
 | danger | `z < −4` | 1 |
 | middle | `−4 ≤ z < 0` | 2 |
-| safe | `0 ≤ z < 4` | 3 |
-| **final** | `z ≥ 4` | **1**（final taper） |
+| safe | `z ≥ 0` | 3 |
 
 実装は `skip_pattern.zone_from_z` と `ZONE_MAX_STREAK`。run がゾーン跨ぎなら許容は run 内ゾーンの `min`（最保守）。
+
+> **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
 
 ### 4.4 ガード式
 

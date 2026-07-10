@@ -6,7 +6,9 @@ gradio imports, so this module is fully unit-testable without a model.
 The pattern is generated for all steps at once (the max-streak constraint
 needs the whole picture). Guards force the first/last ~5% of steps to full
 computation. Skip decisions are drawn from a seeded RNG for reproducibility;
-a zone-based max-skip-streak constraint then trims runs deterministically.
+a zone-based max-skip-streak constraint (3 zones: danger/middle/safe) then
+trims runs deterministically. End-of-generation moderation is handled by
+the skip-probability taper (probability_models.py), not by a zone.
 
 Naming discipline: only ``skip_probability`` / ``skip_density`` style names
 are used. The rejected score-based and top-K selection concepts from the
@@ -20,16 +22,17 @@ from dataclasses import dataclass
 
 from . import probability_models
 
-# Trajectory-coordinate zone boundaries (see design spec):
+# Trajectory-coordinate zone boundaries (3-zone max-skip-streak model;
+# see docs/SPEC-alpha.md for the 2026-07-10 removal of the former "final"
+# zone -- end-of-generation moderation is handled by the skip-probability
+# taper in probability_models.py instead):
 #   danger: z < -4
 #   middle: -4 <= z < 0
-#   safe:    0 <= z < 4
-#   final:   z >= 4
+#   safe:    z >= 0
 ZONE_MAX_STREAK = {
     "danger": 1,
     "middle": 2,
     "safe": 3,
-    "final": 1,
 }
 
 
@@ -43,14 +46,12 @@ def logsnr_proxy_from_t_now(t_now, eps=1e-6):
 
 
 def zone_from_z(z):
-    """Classify a trajectory coordinate into a rough zone."""
+    """Classify a trajectory coordinate into a rough zone (3-zone model)."""
     if z < -4.0:
         return "danger"
     if z < 0.0:
         return "middle"
-    if z < 4.0:
-        return "safe"
-    return "final"
+    return "safe"
 
 
 def guard_count_for(num_steps):
@@ -162,7 +163,7 @@ def generate_skip_pattern(
 
     Steps are 1-based for guard logic. Guard steps get ``p = 0.0`` and
     ``skip = False``. Non-guard steps skip when ``rng.random() < p``. The
-    zone-based max-streak constraint is then applied.
+    zone-based max-streak constraint (3-zone model) is then applied.
 
     ``expected_skips_before_streak`` is the sum of ``p`` over non-guard
     steps (deterministic, independent of the RNG draws).

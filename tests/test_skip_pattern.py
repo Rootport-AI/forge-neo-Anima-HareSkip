@@ -46,8 +46,8 @@ def test_logsnr_proxy_clamped_and_monotone():
         (-0.0001, "middle"),
         (0.0, "safe"),
         (3.9999, "safe"),
-        (4.0, "final"),
-        (10.0, "final"),
+        (4.0, "safe"),
+        (10.0, "safe"),
         (-100.0, "danger"),
     ],
 )
@@ -68,7 +68,6 @@ def test_zone_max_streak_table():
         "danger": 1,
         "middle": 2,
         "safe": 3,
-        "final": 1,
     }
 
 
@@ -154,13 +153,27 @@ def test_streak_cross_zone_danger_forces_break():
 
 
 def test_streak_safe_run_of_five_trimmed_to_three():
-    # 5-run entirely in safe zone (0 <= z < 4): allowed 3.
+    # 5-run entirely in safe zone (z >= 0): allowed 3.
     skip = [True, True, True, True, True]
     z = [0.5, 1.0, 1.5, 2.0, 2.5]
     p = [0.50, 0.10, 0.20, 0.15, 0.50]
     sp.apply_max_streak_constraint(skip, z, p)
     assert _max_run(skip) <= 3
     _assert_streaks_ok(skip, z)
+
+
+def test_streak_safe_run_spanning_former_final_boundary():
+    # 3-zone model: the former z=4 "final" boundary no longer splits a run.
+    # A run straddling z=4 stays a single safe-zone run (allowed 3).
+    skip = [True, True, True]
+    z = [3.5, 4.0, 4.5]  # all safe under the 3-zone model
+    p = [0.30, 0.10, 0.20]
+    sp.apply_max_streak_constraint(skip, z, p)
+    # Run length 3 == allowed 3, so nothing is trimmed.
+    assert skip == [True, True, True]
+    _assert_streaks_ok(skip, z)
+    for zi in z:
+        assert sp.zone_from_z(zi) == "safe"
 
 
 def test_streak_determinism_on_copies():

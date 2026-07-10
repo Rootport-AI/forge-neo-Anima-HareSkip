@@ -76,7 +76,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 
 - **スケジュール捕捉失敗時**: §3-1 の通り `_candidate_sigma_sources` に実機で有効な属性パスを追加。復元値は全て有限かつ `(0,1)` 内でなければ `None` 扱いになる点に注意（範囲外なら sigma→t 前提が崩れている）。
 - **較正（`p_cap(a)` / `z_enter(a)` 調整）**: `probability_models.py` に**新バージョン `sigmoid_band_v0.2` を登録して切り替える**。**v0.1 は書き換えない**。手順: `register("sigmoid_band_v0.2", NewModel())` → `STATE.hareskip_probability_model` を新名に。`skip_pattern.py` は名前で lookup するため変更不要（`generate_skip_pattern(..., probability_model=...)`）。a=1.0 が skip 数不足なら `p_cap` 上限や `z_enter` の負方向拡張を検討。
-- **streak 刈り込みが強すぎる場合**: `apply_max_streak_constraint` は run 内 `(p,z,index)` 最小をフルに戻す。`expected_skips_before_streak`（刈り込み前 p 総和）と実 `skip_count` の乖離が大きすぎるなら `ZONE_MAX_STREAK`（特に final=1 の taper）や safe=3 の緩和を検討。刈り込みは決定論なので同一入力で再現する。
+- **streak 刈り込みが強すぎる場合**: `apply_max_streak_constraint` は run 内 `(p,z,index)` 最小をフルに戻す。`expected_skips_before_streak`（刈り込み前 p 総和）と実 `skip_count` の乖離が大きすぎるなら `ZONE_MAX_STREAK`（danger=1 / middle=2 / safe=3 の 3 ゾーンモデル、2026-07-10 に final ゾーンを廃止済み。§ 下記および `docs/SPEC-alpha.md` §4.3 参照）や safe=3 の緩和を検討。刈り込みは決定論なので同一入力で再現する。
+- **skip-probability taper の再較正（将来課題・ユーザー決定）**: 2026-07-10 に旧 final ゾーン（`z ≥ 4` で streak=1 に絞る「最終仕上げ保護」）を廃止し、danger/middle/safe の 3 ゾーンに統合した（層別再分析で final 帯域の密度低下が選択バイアスと判明したため、定量的裏付けが無いと判断）。生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit`）**のみ**が担う設計に戻った。taper 自体は温存するが、**その較正方法（`z_exit(a)` / `tau_exit` の値）は現行データでは正当化できず、新規データによる再較正が必要**——これはユーザー決定であり、次セッション以降の作業対象。較正に使えるデータが揃うまでは v0.1 の値のまま据え置く。
 
 ---
 
