@@ -25,6 +25,13 @@ def _t_now_schedule(n=30):
     return [hi + (lo - hi) * i / (n - 1) for i in range(n)]
 
 
+def _t_now_from_z(z):
+    """Inverse of logsnr_proxy_from_t_now: t = 1 / (1 + exp(z / 2))."""
+    import math
+
+    return 1.0 / (1.0 + math.exp(z / 2.0))
+
+
 # --- coordinate helpers -----------------------------------------------------
 
 
@@ -51,16 +58,25 @@ def test_logsnr_proxy_clamped_and_monotone():
         (-100.0, "danger"),
     ],
 )
-def test_zone_boundaries(z, zone):
+def test_zone_boundaries_default(z, zone):
+    # Default boundaries (low=-4.0, high=0.0).
     assert sp.zone_from_z(z) == zone
 
 
 @pytest.mark.parametrize(
-    "n,expected",
-    [(10, 1), (20, 1), (30, 2), (50, 2)],
+    "z,zone",
+    [
+        # boundaries (low=-2.0, high=2.0):
+        (-3.0, "danger"),   # z < low
+        (-2.0, "middle"),   # z == low -> middle
+        (-1.0, "middle"),
+        (1.0, "middle"),    # low <= z < high
+        (2.0, "safe"),      # z == high -> safe
+        (3.0, "safe"),      # z >= high
+    ],
 )
-def test_guard_count_for(n, expected):
-    assert sp.guard_count_for(n) == expected
+def test_zone_boundaries_custom(z, zone):
+    assert sp.zone_from_z(z, boundaries=(-2.0, 2.0)) == zone
 
 
 def test_zone_max_streak_table():
@@ -71,16 +87,121 @@ def test_zone_max_streak_table():
     }
 
 
-# --- guards -----------------------------------------------------------------
+def test_progress_for_step():
+    assert sp.progress_for_step(0, 30) == 0.0
+    assert sp.progress_for_step(29, 30) == pytest.approx(1.0)
+    assert sp.progress_for_step(0, 1) == 0.0  # single-step guard
 
 
-def test_guards_forced_full_30_steps():
+# --- skip window (replaces the former ~5% guard rule) -----------------------
+
+
+def test_default_window_reproduces_old_30_step_guards():
+    # Default window (0.05, 0.95) with progress = idx / 29 reproduces the old
+    # max(1, round(0.05 * 30)) = 2 guards: idx 0, 1, 28, 29 are forced full
+    # with p == 0.0 and never skipped.
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=7)
-    assert pat.guard_count == 2
+    assert pat.skip_window == (0.05, 0.95)
+    assert pat.guarded_steps == 4  # idx 0, 1, 28, 29
     for idx in (0, 1, 28, 29):
         assert pat.skip[idx] is False
         assert pat.p_by_step[idx] == 0.0
+    # Interior boundary steps ARE eligible (nonzero p in the band).
+    for idx in (2, 27):
+        assert pat.p_by_step[idx] > 0.0
+
+
+def test_full_window_makes_every_step_eligible():
+    # WYSIWYG (2026-07-10 user decision): window (0.0, 1.0) means NO hidden
+    # safety net — every step, including the last, is eligible for skipping.
+    # There are zero window-excluded (guarded) steps.
+    sched = _t_now_schedule(30)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=1.0, skip_seed=0, skip_window=(0.0, 1.0)
+    )
+    assert pat.skip_window == (0.0, 1.0)
+    assert pat.guarded_steps == 0
+    # Contrast with the default window, which forces the ends full: under
+    # (0.0, 1.0) the first and last steps are NOT zeroed by a window guard,
+    # so their p equals the raw band value (idx 0's z is far below the band,
+    # so its p is ~0 by the band, not by a guard). The eligibility mask is
+    # what changed: no step is force-zeroed by the window.
+    default = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=0)
+    # Default window zeroes idx 1 (progress 0.0345 < 0.05) even though its raw
+    # band p is large; the full window leaves it at the raw band value.
+    assert default.p_by_step[1] == 0.0
+    assert pat.p_by_step[1] > 0.0
+
+    # The last step CAN be skipped when its z falls inside the probability
+    # band. Build a schedule whose final t_now puts z near the band centre so
+    # a suitable seed skips the last step (proving it is genuinely eligible,
+    # not forced full by the window). z is swept from -3.0 up to 4.5, keeping
+    # the final step comfortably inside the band (z_exit=5.2 at a=1.0).
+    band_sched = [_t_now_from_z(-3.0 + 7.5 * i / 29) for i in range(30)]
+    last_z = sp.logsnr_proxy_from_t_now(band_sched[-1])
+    assert 4.0 < last_z < 5.0  # inside the band
+    last_can_skip = False
+    for seed in range(200):
+        p = sp.generate_skip_pattern(
+            band_sched, aggressiveness=1.0, skip_seed=seed, skip_window=(0.0, 1.0)
+        )
+        if p.skip[-1]:
+            last_can_skip = True
+            break
+    assert last_can_skip, "last step must be skippable under window (0.0, 1.0)"
+
+
+def test_narrow_window_excludes_more_steps():
+    sched = _t_now_schedule(30)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=1.0, skip_seed=1, skip_window=(0.3, 0.7)
+    )
+    # progress in [0.3, 0.7] -> idx 9..20 inclusive eligible (12 steps),
+    # so 18 guarded.
+    eligible = [i for i in range(30) if pat.p_by_step[i] > 0.0 or pat.skip[i]]
+    for idx in eligible:
+        prog = idx / 29.0
+        assert 0.3 <= prog <= 0.7
+    assert pat.guarded_steps == 30 - len(
+        [i for i in range(30) if 0.3 <= i / 29.0 <= 0.7]
+    )
+
+
+# --- custom zone boundaries -------------------------------------------------
+
+
+def test_custom_zone_boundaries_shift_classification():
+    # boundaries (-2, 2): z=-3 -> danger; z=1 -> middle; z=3 -> safe.
+    assert sp.zone_from_z(-3.0, (-2.0, 2.0)) == "danger"
+    assert sp.zone_from_z(1.0, (-2.0, 2.0)) == "middle"
+    assert sp.zone_from_z(3.0, (-2.0, 2.0)) == "safe"
+    # Same z values under default boundaries classify differently.
+    assert sp.zone_from_z(1.0) == "safe"  # default high=0.0
+    assert sp.zone_from_z(-3.0) == "middle"  # default low=-4.0
+
+
+def test_generate_records_zone_boundaries():
+    sched = _t_now_schedule(30)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=0.5, skip_seed=3, zone_boundaries=(-2.0, 2.0)
+    )
+    assert pat.zone_boundaries == (-2.0, 2.0)
+
+
+def test_custom_zone_boundaries_change_streak_trimming():
+    # A run of 3 skips at z=[0.5, 1.0, 1.5] is entirely "safe" under default
+    # boundaries (high=0.0) -> allowed 3, untrimmed. Under boundaries with
+    # high=2.0 those become "middle" -> allowed 2, so one is trimmed.
+    skip = [True, True, True]
+    z = [0.5, 1.0, 1.5]
+    p = [0.30, 0.10, 0.20]
+    a = list(skip)
+    sp.apply_max_streak_constraint(a, z, list(p), zone_boundaries=(-4.0, 0.0))
+    assert a == [True, True, True]  # all safe under default
+    b = list(skip)
+    sp.apply_max_streak_constraint(b, z, list(p), zone_boundaries=(-4.0, 2.0))
+    assert sum(b) == 2  # middle zone allows only 2
 
 
 # --- derive_skip_seed -------------------------------------------------------
@@ -195,7 +316,7 @@ def _max_run(skip):
     return best
 
 
-def _assert_streaks_ok(skip, z):
+def _assert_streaks_ok(skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES):
     n = len(skip)
     i = 0
     while i < n:
@@ -205,7 +326,10 @@ def _assert_streaks_ok(skip, z):
         j = i
         while j < n and skip[j]:
             j += 1
-        allowed = min(sp.ZONE_MAX_STREAK[sp.zone_from_z(z[k])] for k in range(i, j))
+        allowed = min(
+            sp.ZONE_MAX_STREAK[sp.zone_from_z(z[k], boundaries)]
+            for k in range(i, j)
+        )
         assert (j - i) <= allowed
         i = j
 
@@ -218,6 +342,17 @@ def test_generated_pattern_respects_streaks():
     for seed in range(20):
         pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=seed)
         _assert_streaks_ok(pat.skip, pat.z_by_step)
+
+
+def test_generated_pattern_respects_custom_boundaries():
+    sched = _t_now_schedule(30)
+    boundaries = (-2.0, 2.0)
+    for seed in range(20):
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=1.0, skip_seed=seed, zone_boundaries=boundaries
+        )
+        assert pat.zone_boundaries == boundaries
+        _assert_streaks_ok(pat.skip, pat.z_by_step, boundaries)
 
 
 # --- reproducibility --------------------------------------------------------
@@ -276,7 +411,7 @@ def test_exact_target_impossible_no_raise():
         sched, aggressiveness=0.5, skip_seed=1, exact_target=10 ** 6
     )
     # Returns the closest attainable, never raises. With 30 steps and
-    # guards, cannot possibly reach a million.
+    # the window, cannot possibly reach a million.
     assert pat.skip_count < 30
     assert isinstance(pat, sp.SkipPattern)
 
@@ -295,18 +430,18 @@ def test_exact_target_deterministic():
 # --- expected skips ---------------------------------------------------------
 
 
-def test_expected_skips_equals_sum_p_nonguard():
+def test_expected_skips_equals_sum_p_eligible():
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(sched, aggressiveness=0.5, skip_seed=5)
-    guard = pat.guard_count
+    window_start, window_end = pat.skip_window
     n = pat.num_steps
     manual = sum(
         pat.p_by_step[idx]
         for idx in range(n)
-        if not (idx + 1 <= guard or idx + 1 > n - guard)
+        if window_start <= sp.progress_for_step(idx, n) <= window_end
     )
     assert pat.expected_skips_before_streak == pytest.approx(manual)
-    # Guard steps contribute zero, so sum over all p equals the same.
+    # Excluded steps contribute zero, so sum over all p equals the same.
     assert pat.expected_skips_before_streak == pytest.approx(sum(pat.p_by_step))
 
 

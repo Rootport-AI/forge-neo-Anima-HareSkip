@@ -4,11 +4,24 @@ Stdlib only (math / random / hashlib / dataclasses). No Forge, torch or
 gradio imports, so this module is fully unit-testable without a model.
 
 The pattern is generated for all steps at once (the max-streak constraint
-needs the whole picture). Guards force the first/last ~5% of steps to full
-computation. Skip decisions are drawn from a seeded RNG for reproducibility;
-a zone-based max-skip-streak constraint (3 zones: danger/middle/safe) then
-trims runs deterministically. End-of-generation moderation is handled by
-the skip-probability taper (probability_models.py), not by a zone.
+needs the whole picture). A user-configurable **skip window** in the
+progress domain (``progress_i = idx / (num_steps - 1)``, 0-based) decides
+which steps are eligible to be skipped; steps outside the window are forced
+full (``p = 0.0``, ``skip = False``). Skip decisions for eligible steps are
+drawn from a seeded RNG for reproducibility; a zone-based max-skip-streak
+constraint (3 zones: danger/middle/safe, with user-configurable boundaries)
+then trims runs deterministically. End-of-generation moderation is handled
+by the skip-probability taper (probability_models.py), not by a zone.
+
+Skip window semantics (2026-07-10 user decision, WYSIWYG)
+========================================================
+The skip window replaces the former automatic ~5% guard rule. There is NO
+hidden last-step safety net: if the user sets the window to ``(0.0, 1.0)``
+every step (including the last) is eligible. The default ``(0.05, 0.95)``
+reproduces the old ``max(1, round(0.05 * N))`` guards for 30 steps (idx
+0, 1, 28, 29 forced full). The first step remains full in practice via the
+shared first_call / missing_residual force-full in patcher.py — that is an
+inference necessity, not a UI guard, and is independent of this window.
 
 Naming discipline: only ``skip_probability`` / ``skip_density`` style names
 are used. The rejected score-based and top-K selection concepts from the
@@ -22,13 +35,17 @@ from dataclasses import dataclass
 
 from . import probability_models
 
-# Trajectory-coordinate zone boundaries (3-zone max-skip-streak model;
+# Default trajectory-coordinate zone boundaries (3-zone max-skip-streak model;
 # see docs/SPEC-alpha.md for the 2026-07-10 removal of the former "final"
 # zone -- end-of-generation moderation is handled by the skip-probability
-# taper in probability_models.py instead):
-#   danger: z < -4
-#   middle: -4 <= z < 0
-#   safe:    z >= 0
+# taper in probability_models.py instead). Boundaries are parameterized
+# (see zone_from_z); with the default (low=-4.0, high=0.0):
+#   danger: z < low   (-> streak 1)
+#   middle: low <= z < high  (-> streak 2)
+#   safe:   z >= high  (-> streak 3)
+DEFAULT_ZONE_BOUNDARIES = (-4.0, 0.0)
+DEFAULT_SKIP_WINDOW = (0.05, 0.95)
+
 ZONE_MAX_STREAK = {
     "danger": 1,
     "middle": 2,
@@ -45,18 +62,30 @@ def logsnr_proxy_from_t_now(t_now, eps=1e-6):
     return 2.0 * math.log((1.0 - t) / t)
 
 
-def zone_from_z(z):
-    """Classify a trajectory coordinate into a rough zone (3-zone model)."""
-    if z < -4.0:
+def zone_from_z(z, boundaries=DEFAULT_ZONE_BOUNDARIES):
+    """Classify a trajectory coordinate into a rough zone (3-zone model).
+
+    ``boundaries`` is a ``(low, high)`` pair (default ``(-4.0, 0.0)``):
+      z < low         -> "danger"
+      low <= z < high -> "middle"
+      z >= high       -> "safe"
+    """
+    low, high = boundaries
+    if z < low:
         return "danger"
-    if z < 0.0:
+    if z < high:
         return "middle"
     return "safe"
 
 
-def guard_count_for(num_steps):
-    """Number of forced-full steps at each end (~5%, at least 1)."""
-    return max(1, round(num_steps * 0.05))
+def progress_for_step(idx, num_steps):
+    """0-based progress of a step, ``idx / (num_steps - 1)``.
+
+    A single-step generation (num_steps <= 1) yields 0.0.
+    """
+    if num_steps <= 1:
+        return 0.0
+    return idx / float(num_steps - 1)
 
 
 def derive_skip_seed(image_seed, offset):
@@ -77,9 +106,11 @@ class SkipPattern:
 
     skip: list  # list[bool], per step
     z_by_step: list  # list[float]
-    p_by_step: list  # list[float], skip probability per step (guards = 0.0)
+    p_by_step: list  # list[float], skip probability per step (excluded = 0.0)
     params: dict
-    guard_count: int
+    skip_window: tuple  # (window_start, window_end) in progress domain
+    zone_boundaries: tuple  # (low, high) in z domain
+    guarded_steps: int  # count of window-excluded steps (for logging)
     skip_seed: int
     expected_skips_before_streak: float
     skip_count: int
@@ -89,15 +120,18 @@ class SkipPattern:
     num_steps: int
 
 
-def apply_max_streak_constraint(skip, z_by_step, p_by_step):
+def apply_max_streak_constraint(
+    skip, z_by_step, p_by_step, zone_boundaries=DEFAULT_ZONE_BOUNDARIES
+):
     """Trim skip runs in place so no run exceeds its allowed streak.
 
     Deterministic (no RNG). For each maximal run of consecutive skipped
     steps, the allowed streak is the most conservative
-    ``ZONE_MAX_STREAK`` over the zones present in the run. While a run is
-    too long, flip the step with the lowest ``(p, z, index)`` back to full
-    and re-scan (a flip may split a run into shorter sub-runs). Terminates
-    because each flip strictly reduces the number of skips.
+    ``ZONE_MAX_STREAK`` over the zones present in the run (zones classified
+    with ``zone_boundaries``). While a run is too long, flip the step with
+    the lowest ``(p, z, index)`` back to full and re-scan (a flip may split
+    a run into shorter sub-runs). Terminates because each flip strictly
+    reduces the number of skips.
     """
     while True:
         # Find the first maximal run that violates its allowed streak.
@@ -113,7 +147,8 @@ def apply_max_streak_constraint(skip, z_by_step, p_by_step):
                 j += 1
             # run is [i, j)
             allowed = min(
-                ZONE_MAX_STREAK[zone_from_z(z_by_step[k])] for k in range(i, j)
+                ZONE_MAX_STREAK[zone_from_z(z_by_step[k], zone_boundaries)]
+                for k in range(i, j)
             )
             if (j - i) > allowed:
                 violated = (i, j, allowed)
@@ -135,20 +170,37 @@ def apply_max_streak_constraint(skip, z_by_step, p_by_step):
         # correctly re-evaluated.
 
 
-def _draw_pattern(t_now_by_step, params, guard_count, num_steps, model, rng):
-    """Draw one raw pattern (pre-constraint) and its z/p arrays."""
+def _draw_pattern(t_now_by_step, params, skip_window, num_steps, model, rng):
+    """Draw one raw pattern (pre-constraint) and its z/p arrays.
+
+    A step is eligible for skipping iff its progress lies within
+    ``skip_window`` (inclusive on both ends). Excluded steps get ``p = 0.0``
+    and ``skip = False`` (forced full).
+    """
+    window_start, window_end = skip_window
     z_by_step = []
     p_by_step = []
     skip = []
     for idx, t_now in enumerate(t_now_by_step):
-        step_no = idx + 1
-        is_guard = step_no <= guard_count or step_no > num_steps - guard_count
+        progress = progress_for_step(idx, num_steps)
+        eligible = window_start <= progress <= window_end
         z = logsnr_proxy_from_t_now(t_now)
-        p = 0.0 if is_guard else model.skip_probability(z, params)
+        p = model.skip_probability(z, params) if eligible else 0.0
         z_by_step.append(z)
         p_by_step.append(p)
-        skip.append(False if is_guard else (rng.random() < p))
+        skip.append((rng.random() < p) if eligible else False)
     return skip, z_by_step, p_by_step
+
+
+def _guarded_steps_count(num_steps, skip_window):
+    """Number of steps excluded by the skip window (forced full)."""
+    window_start, window_end = skip_window
+    count = 0
+    for idx in range(num_steps):
+        progress = progress_for_step(idx, num_steps)
+        if not (window_start <= progress <= window_end):
+            count += 1
+    return count
 
 
 def generate_skip_pattern(
@@ -156,17 +208,23 @@ def generate_skip_pattern(
     aggressiveness,
     skip_seed,
     probability_model="sigmoid_band_v0.1",
+    skip_window=DEFAULT_SKIP_WINDOW,
+    zone_boundaries=DEFAULT_ZONE_BOUNDARIES,
     exact_target=None,
     max_resample=100,
 ):
     """Generate a stochastic skip pattern for all steps.
 
-    Steps are 1-based for guard logic. Guard steps get ``p = 0.0`` and
-    ``skip = False``. Non-guard steps skip when ``rng.random() < p``. The
-    zone-based max-streak constraint (3-zone model) is then applied.
+    Steps are 0-based for the progress/window logic. A step is eligible for
+    skipping iff ``window_start <= progress_i <= window_end`` where
+    ``progress_i = idx / (num_steps - 1)``. Excluded steps get ``p = 0.0``
+    and ``skip = False``. Eligible steps skip when ``rng.random() < p``. The
+    zone-based max-streak constraint (3-zone model, ``zone_boundaries``) is
+    then applied.
 
-    ``expected_skips_before_streak`` is the sum of ``p`` over non-guard
-    steps (deterministic, independent of the RNG draws).
+    ``expected_skips_before_streak`` is the sum of ``p`` over eligible steps
+    (deterministic, independent of the RNG draws); excluded steps carry
+    ``p == 0.0`` so summing all ``p`` is equivalent.
 
     If ``exact_target`` is not None, the whole pattern is re-rolled up to
     ``max_resample`` times. Each attempt uses ``random.Random(skip_seed +
@@ -176,15 +234,14 @@ def generate_skip_pattern(
     ties) is kept. Impossible targets never raise.
     """
     num_steps = len(t_now_by_step)
-    guard_count = guard_count_for(num_steps)
     model = probability_models.get_model(probability_model)
     params = model.params_from_aggressiveness(aggressiveness)
 
     def build(rng):
         skip, z_by_step, p_by_step = _draw_pattern(
-            t_now_by_step, params, guard_count, num_steps, model, rng
+            t_now_by_step, params, skip_window, num_steps, model, rng
         )
-        apply_max_streak_constraint(skip, z_by_step, p_by_step)
+        apply_max_streak_constraint(skip, z_by_step, p_by_step, zone_boundaries)
         return skip, z_by_step, p_by_step
 
     if exact_target is None:
@@ -208,18 +265,21 @@ def generate_skip_pattern(
         else:
             _dist, skip, z_by_step, p_by_step = best
 
-    # expected_skips_before_streak: sum of p over non-guard steps. Guard
+    # expected_skips_before_streak: sum of p over eligible steps. Excluded
     # steps carry p == 0.0 so summing all p is equivalent and robust.
     expected = sum(p_by_step)
     skipped_steps = [idx + 1 for idx, s in enumerate(skip) if s]
     skip_count = len(skipped_steps)
+    guarded_steps = _guarded_steps_count(num_steps, skip_window)
 
     return SkipPattern(
         skip=skip,
         z_by_step=z_by_step,
         p_by_step=p_by_step,
         params=params,
-        guard_count=guard_count,
+        skip_window=tuple(skip_window),
+        zone_boundaries=tuple(zone_boundaries),
+        guarded_steps=guarded_steps,
         skip_seed=skip_seed,
         expected_skips_before_streak=expected,
         skip_count=skip_count,
