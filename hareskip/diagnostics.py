@@ -80,11 +80,11 @@ def log_experiment_snapshot() -> None:
             f"force_full_interval={STATE.tea_force_full_interval} "
             f"dry_run={STATE.hareskip_dry_run}"
         )
-    if STATE.auto_ujicache_active:
+    if STATE.auto_teacache_active:
         info(
-            "auto_uji_config="
-            f"active=True row_count={STATE.auto_ujicache_row_count} "
-            f"original_n_iter={STATE.auto_ujicache_original_n_iter}"
+            "auto_tea_config="
+            f"active=True row_count={STATE.auto_teacache_row_count} "
+            f"original_n_iter={STATE.auto_teacache_original_n_iter}"
         )
 
 

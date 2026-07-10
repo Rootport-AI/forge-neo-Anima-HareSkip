@@ -3,10 +3,10 @@
 import gradio as gr
 import modules.scripts as scripts
 
-from .auto_ujicache import (
-    AutoUjiCsvError,
-    apply_auto_ujicache_row_to_state,
-    parse_auto_ujicache_csv,
+from .auto_teacache import (
+    AutoTeaCsvError,
+    apply_auto_teacache_row_to_state,
+    parse_auto_teacache_csv,
 )
 from .callbacks import register_callbacks
 from .diagnostics import log_generation_start, log_timing_summary
@@ -178,19 +178,19 @@ class Script(scripts.Script):
                 elem_id="resrefine-curve-ema-smoothing",
             )
             with gr.Accordion(
-                "Auto Uji mode",
+                "Auto Tea mode",
                 open=False,
-                elem_id="ujicache-auto-uji-panel",
+                elem_id="tea-auto-panel",
             ):
-                auto_ujicache_enabled = gr.Checkbox(
-                    label="Enable Auto Uji mode",
+                auto_teacache_enabled = gr.Checkbox(
+                    label="Enable Auto Tea mode",
                     value=False,
-                    elem_id="ujicache-auto-uji-enable",
+                    elem_id="tea-auto-enable",
                 )
-                auto_ujicache_csv = gr.Textbox(
-                    label="Auto Uji CSV",
+                auto_teacache_csv = gr.Textbox(
+                    label="Auto Tea CSV",
                     lines=6,
-                    elem_id="ujicache-auto-uji-csv",
+                    elem_id="tea-auto-csv",
                 )
             with gr.Accordion("Debug log mode", open=False, elem_id="hareskip-debug-panel"):
                 debug_log_enabled = gr.Checkbox(
@@ -277,7 +277,7 @@ class Script(scripts.Script):
             enabled.change(
                 fn=_hareskip_enable_updates,
                 inputs=[enabled],
-                outputs=[auto_ujicache_enabled],
+                outputs=[auto_teacache_enabled],
             )
             tea_coefficient_profile.change(
                 fn=_hareskip_profile_change_updates,
@@ -309,30 +309,30 @@ class Script(scripts.Script):
             tea_force_full_interval,
             hareskip_dry_run,
             hareskip_verbose_trace,
-            auto_ujicache_enabled,
-            auto_ujicache_csv,
+            auto_teacache_enabled,
+            auto_teacache_csv,
             capture_calibration_pairs,
         ]
 
     def before_process(self, p, *script_args):
         try:
-            _prepare_auto_ujicache_run(p, script_args)
-        except AutoUjiCsvError as exc:
-            STATE.auto_ujicache_parse_error = str(exc)
-            STATE.set_error(f"auto uji csv error: {exc}")
-            error(f"auto_uji_csv_error {exc}")
-            raise RuntimeError(f"Auto Uji CSV error: {exc}") from exc
+            _prepare_auto_teacache_run(p, script_args)
+        except AutoTeaCsvError as exc:
+            STATE.auto_teacache_parse_error = str(exc)
+            STATE.set_error(f"auto tea csv error: {exc}")
+            error(f"auto_tea_csv_error {exc}")
+            raise RuntimeError(f"Auto Tea CSV error: {exc}") from exc
         except Exception as exc:
-            STATE.set_error(f"auto uji setup failed: {exc}")
-            exception("auto uji setup failed")
+            STATE.set_error(f"auto tea setup failed: {exc}")
+            exception("auto tea setup failed")
             raise
 
     def process(self, p, *script_args):
         try:
-            _apply_auto_ujicache_seed_template(p)
+            _apply_auto_teacache_seed_template(p)
         except Exception as exc:
-            STATE.set_error(f"auto uji seed setup failed: {exc}")
-            exception("auto uji seed setup failed")
+            STATE.set_error(f"auto tea seed setup failed: {exc}")
+            exception("auto tea seed setup failed")
             raise
 
     def process_before_every_sampling(self, p, *script_args, **kwargs):
@@ -363,7 +363,7 @@ class Script(scripts.Script):
         except Exception as exc:
             STATE.calibration_capture_errors += 1
             warning(f"calibration_capture_summary_failed reason={exc}")
-        _finish_auto_ujicache_run(p)
+        _finish_auto_teacache_run(p)
 
 
 _AUTO_HARESKIP_P_ATTRS = (
@@ -377,22 +377,22 @@ _AUTO_HARESKIP_P_ATTRS = (
 )
 
 
-def _prepare_auto_ujicache_run(p, script_args) -> None:
+def _prepare_auto_teacache_run(p, script_args) -> None:
     _apply_ui_args(script_args)
-    _clear_auto_ujicache_p_attrs(p)
-    STATE.auto_ujicache_active = False
-    STATE.auto_ujicache_row_index = None
-    STATE.auto_ujicache_row_name = None
-    STATE.auto_ujicache_row_count = 0
-    STATE.auto_ujicache_original_n_iter = 1
-    STATE.auto_ujicache_parse_error = None
+    _clear_auto_teacache_p_attrs(p)
+    STATE.auto_teacache_active = False
+    STATE.auto_teacache_row_index = None
+    STATE.auto_teacache_row_name = None
+    STATE.auto_teacache_row_count = 0
+    STATE.auto_teacache_original_n_iter = 1
+    STATE.auto_teacache_parse_error = None
 
-    if not (STATE.enabled and STATE.auto_ujicache_enabled):
+    if not (STATE.enabled and STATE.auto_teacache_enabled):
         return
 
-    result = parse_auto_ujicache_csv(STATE.auto_ujicache_csv)
+    result = parse_auto_teacache_csv(STATE.auto_teacache_csv)
     for message in result.warnings:
-        warning(f"auto_uji_csv_warning {message}")
+        warning(f"auto_tea_csv_warning {message}")
 
     rows = result.rows
     original_n_iter = _positive_int(getattr(p, "n_iter", 1), 1)
@@ -404,18 +404,18 @@ def _prepare_auto_ujicache_run(p, script_args) -> None:
     setattr(p, "_hareskip_auto_original_batch_size", batch_size)
     setattr(p, "n_iter", total_n_iter)
 
-    STATE.auto_ujicache_active = True
-    STATE.auto_ujicache_row_count = len(rows)
-    STATE.auto_ujicache_original_n_iter = original_n_iter
+    STATE.auto_teacache_active = True
+    STATE.auto_teacache_row_count = len(rows)
+    STATE.auto_teacache_original_n_iter = original_n_iter
 
     info(
-        "auto_uji_prepare "
+        "auto_tea_prepare "
         f"rows={len(rows)} original_n_iter={original_n_iter} "
         f"batch_size={batch_size} total_n_iter={total_n_iter}"
     )
 
 
-def _apply_auto_ujicache_seed_template(p) -> None:
+def _apply_auto_teacache_seed_template(p) -> None:
     rows = getattr(p, "_hareskip_auto_rows", None)
     if not rows:
         return
@@ -452,34 +452,34 @@ def _apply_auto_ujicache_seed_template(p) -> None:
     setattr(p, "_hareskip_auto_seed_template_ready", True)
     if not was_ready:
         info(
-            "auto_uji_seed_template "
+            "auto_tea_seed_template "
             f"rows={row_count} template_size={template_size} seeds={_seed_label(seed_template)}"
         )
 
 
-def _apply_auto_ujicache_row_if_needed(p) -> None:
+def _apply_auto_teacache_row_if_needed(p) -> None:
     rows = getattr(p, "_hareskip_auto_rows", None)
-    if not rows or not STATE.auto_ujicache_active or not STATE.hareskip_enabled:
+    if not rows or not STATE.auto_teacache_active or not STATE.hareskip_enabled:
         return
 
     original_n_iter = _positive_int(
         getattr(p, "_hareskip_auto_original_n_iter", 1),
         1,
     )
-    iteration = _current_auto_ujicache_iteration(p)
+    iteration = _current_auto_teacache_iteration(p)
     row_index = max(0, min(len(rows) - 1, iteration // original_n_iter))
     repeat_index = (iteration % original_n_iter) + 1
     row = rows[row_index]
 
-    apply_auto_ujicache_row_to_state(row)
-    STATE.auto_ujicache_row_index = row.index
-    STATE.auto_ujicache_row_name = row.name
+    apply_auto_teacache_row_to_state(row)
+    STATE.auto_teacache_row_index = row.index
+    STATE.auto_teacache_row_name = row.name
 
     logged_row_index = getattr(p, "_hareskip_auto_logged_row_index", None)
     if logged_row_index != row_index:
         setattr(p, "_hareskip_auto_logged_row_index", row_index)
         info(
-            "auto_uji_row_start "
+            "auto_tea_row_start "
             f"index={row_index + 1}/{len(rows)} name={row.name} "
             f"repeat={repeat_index}/{original_n_iter} "
             f"threshold={STATE.tea_threshold:.4f} "
@@ -490,16 +490,16 @@ def _apply_auto_ujicache_row_if_needed(p) -> None:
         )
 
 
-def _finish_auto_ujicache_run(p) -> None:
-    _clear_auto_ujicache_p_attrs(p)
-    STATE.auto_ujicache_active = False
-    STATE.auto_ujicache_row_index = None
-    STATE.auto_ujicache_row_name = None
-    STATE.auto_ujicache_row_count = 0
-    STATE.auto_ujicache_original_n_iter = 1
+def _finish_auto_teacache_run(p) -> None:
+    _clear_auto_teacache_p_attrs(p)
+    STATE.auto_teacache_active = False
+    STATE.auto_teacache_row_index = None
+    STATE.auto_teacache_row_name = None
+    STATE.auto_teacache_row_count = 0
+    STATE.auto_teacache_original_n_iter = 1
 
 
-def _clear_auto_ujicache_p_attrs(p) -> None:
+def _clear_auto_teacache_p_attrs(p) -> None:
     for attr in _AUTO_HARESKIP_P_ATTRS:
         try:
             if hasattr(p, attr):
@@ -508,7 +508,7 @@ def _clear_auto_ujicache_p_attrs(p) -> None:
             setattr(p, attr, None)
 
 
-def _current_auto_ujicache_iteration(p) -> int:
+def _current_auto_teacache_iteration(p) -> int:
     value = getattr(p, "iteration", None)
     if value is not None:
         try:
@@ -604,8 +604,8 @@ def _apply_ui_args(script_args) -> None:
 
 def _begin_generation(p, script_args, source: str) -> None:
     _apply_ui_args(script_args)
-    _apply_auto_ujicache_seed_template(p)
-    _apply_auto_ujicache_row_if_needed(p)
+    _apply_auto_teacache_seed_template(p)
+    _apply_auto_teacache_row_if_needed(p)
     if not STATE.active():
         _remove_generation_patches()
         return
@@ -686,14 +686,14 @@ def _apply_infotext_metadata(p) -> None:
             params["Uji shift"] = f"{shift_value:.2f}"
         if STATE.capture_calibration_pairs:
             params["Uji capture_pairs"] = True
-        if STATE.auto_ujicache_active and STATE.auto_ujicache_row_index is not None:
-            if STATE.auto_ujicache_row_count > 0:
+        if STATE.auto_teacache_active and STATE.auto_teacache_row_index is not None:
+            if STATE.auto_teacache_row_count > 0:
                 params["Uji auto_row_index"] = (
-                    f"{STATE.auto_ujicache_row_index}/{STATE.auto_ujicache_row_count}"
+                    f"{STATE.auto_teacache_row_index}/{STATE.auto_teacache_row_count}"
                 )
             else:
-                params["Uji auto_row_index"] = STATE.auto_ujicache_row_index
-            params["Uji auto_row_name"] = STATE.auto_ujicache_row_name or ""
+                params["Uji auto_row_index"] = STATE.auto_teacache_row_index
+            params["Uji auto_row_name"] = STATE.auto_teacache_row_name or ""
     except Exception as exc:
         warning(f"hareskip_metadata_failed reason={exc}")
 

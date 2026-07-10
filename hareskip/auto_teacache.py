@@ -16,12 +16,12 @@ from .state import (
 )
 
 
-class AutoUjiCsvError(ValueError):
+class AutoTeaCsvError(ValueError):
     pass
 
 
 @dataclass
-class AutoUjiRow:
+class AutoTeaRow:
     index: int
     name: str
     threshold: float | None = None
@@ -40,8 +40,8 @@ class AutoUjiRow:
 
 
 @dataclass
-class AutoUjiParseResult:
-    rows: list[AutoUjiRow]
+class AutoTeaParseResult:
+    rows: list[AutoTeaRow]
     warnings: list[str] = field(default_factory=list)
 
 
@@ -79,9 +79,9 @@ _SUPPORTED_COLUMNS = {
 }
 
 
-def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
+def parse_auto_teacache_csv(text: str) -> AutoTeaParseResult:
     if not str(text or "").strip():
-        raise AutoUjiCsvError("reason=empty_csv")
+        raise AutoTeaCsvError("reason=empty_csv")
 
     reader = csv.reader(io.StringIO(str(text)))
     raw_rows = [
@@ -90,7 +90,7 @@ def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
         if any(str(cell).strip() for cell in row)
     ]
     if not raw_rows:
-        raise AutoUjiCsvError("reason=empty_csv")
+        raise AutoTeaCsvError("reason=empty_csv")
 
     header_line, header_cells = raw_rows[0]
     header = [_normalize_column_name(cell) for cell in header_cells]
@@ -98,18 +98,18 @@ def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
         header.pop()
 
     if not header:
-        raise AutoUjiCsvError(f"line={header_line} reason=empty_header")
+        raise AutoTeaCsvError(f"line={header_line} reason=empty_header")
 
     warnings: list[str] = []
     for column in header:
         if column and column not in _SUPPORTED_COLUMNS:
             warnings.append(f"unknown_column={column} ignored=True")
 
-    rows: list[AutoUjiRow] = []
+    rows: list[AutoTeaRow] = []
     for line_number, cells in raw_rows[1:]:
         values = _row_values(header, cells)
         try:
-            row = AutoUjiRow(
+            row = AutoTeaRow(
                 index=len(rows) + 1,
                 name=_parse_name(values.get("name"), len(rows) + 1),
                 threshold=_parse_float(values.get("threshold"), line_number, "threshold"),
@@ -169,10 +169,10 @@ def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
                     "end_percent",
                 ),
             )
-        except AutoUjiCsvError:
+        except AutoTeaCsvError:
             raise
         except Exception as exc:
-            raise AutoUjiCsvError(f"line={line_number} reason={exc}") from exc
+            raise AutoTeaCsvError(f"line={line_number} reason={exc}") from exc
         rows.append(row)
 
         if len(cells) > len(header):
@@ -183,12 +183,12 @@ def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
                 )
 
     if not rows:
-        raise AutoUjiCsvError("reason=no_data_rows")
+        raise AutoTeaCsvError("reason=no_data_rows")
 
-    return AutoUjiParseResult(rows=rows, warnings=warnings)
+    return AutoTeaParseResult(rows=rows, warnings=warnings)
 
 
-def apply_auto_ujicache_row_to_state(row: AutoUjiRow) -> None:
+def apply_auto_teacache_row_to_state(row: AutoTeaRow) -> None:
     if row.threshold is not None:
         STATE.tea_threshold = _clamp_float(row.threshold, 0.0, 1.0)
     if row.formula is not None:
@@ -287,7 +287,7 @@ def _parse_float(value: str | None, line: int, column: str) -> float | None:
     try:
         return float(value)
     except Exception as exc:
-        raise AutoUjiCsvError(
+        raise AutoTeaCsvError(
             f"line={line} column={column} reason=invalid_float value={value}"
         ) from exc
 
@@ -298,7 +298,7 @@ def _parse_int(value: str | None, line: int, column: str) -> int | None:
     try:
         return int(value)
     except Exception as exc:
-        raise AutoUjiCsvError(
+        raise AutoTeaCsvError(
             f"line={line} column={column} reason=invalid_int value={value}"
         ) from exc
 
@@ -308,7 +308,7 @@ def _parse_formula(value: str | None, line: int) -> str | None:
         return None
     formula = _FORMULA_ALIASES.get(str(value).strip().lower())
     if formula is None:
-        raise AutoUjiCsvError(
+        raise AutoTeaCsvError(
             f"line={line} column=formula reason=unknown_formula value={value}"
         )
     return formula
@@ -319,7 +319,7 @@ def _parse_profile(value: str | None, line: int) -> str | None:
         return None
     profile = str(value).strip()
     if profile not in TEA_COEFFICIENT_PROFILES:
-        raise AutoUjiCsvError(
+        raise AutoTeaCsvError(
             f"line={line} column=coefficient_profile reason=unknown_profile value={value}"
         )
     return profile

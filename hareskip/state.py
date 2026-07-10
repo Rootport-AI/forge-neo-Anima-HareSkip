@@ -258,14 +258,14 @@ class RuntimeState:
     hareskip_verbose_trace: bool = False
     capture_calibration_pairs: bool = False
 
-    auto_ujicache_enabled: bool = False
-    auto_ujicache_csv: str = ""
-    auto_ujicache_active: bool = False
-    auto_ujicache_row_index: int | None = None
-    auto_ujicache_row_name: str | None = None
-    auto_ujicache_row_count: int = 0
-    auto_ujicache_original_n_iter: int = 1
-    auto_ujicache_parse_error: str | None = None
+    auto_teacache_enabled: bool = False
+    auto_teacache_csv: str = ""
+    auto_teacache_active: bool = False
+    auto_teacache_row_index: int | None = None
+    auto_teacache_row_name: str | None = None
+    auto_teacache_row_count: int = 0
+    auto_teacache_original_n_iter: int = 1
+    auto_teacache_parse_error: str | None = None
 
     status: str = "disabled"
     error_message: str | None = None
@@ -364,8 +364,8 @@ class RuntimeState:
         tea_force_full_interval: int = 0,
         hareskip_dry_run: bool = False,
         hareskip_verbose_trace: bool = False,
-        auto_ujicache_enabled: bool = False,
-        auto_ujicache_csv: str = "",
+        auto_teacache_enabled: bool = False,
+        auto_teacache_csv: str = "",
         capture_calibration_pairs: bool = False,
     ) -> None:
         self.enabled = bool(enabled)
@@ -422,8 +422,8 @@ class RuntimeState:
         self.hareskip_dry_run = bool(hareskip_dry_run)
         self.hareskip_verbose_trace = bool(hareskip_verbose_trace)
 
-        self.auto_ujicache_enabled = bool(auto_ujicache_enabled) and self.hareskip_enabled
-        self.auto_ujicache_csv = str(auto_ujicache_csv or "")
+        self.auto_teacache_enabled = bool(auto_teacache_enabled) and self.hareskip_enabled
+        self.auto_teacache_csv = str(auto_teacache_csv or "")
         self.capture_calibration_pairs = bool(capture_calibration_pairs)
 
     def active(self) -> bool:

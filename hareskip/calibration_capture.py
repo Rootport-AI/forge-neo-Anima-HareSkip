@@ -138,8 +138,8 @@ def _build_header(p: Any) -> dict[str, Any]:
             "max_skip_streak": STATE.tea_max_skip_streak,
             "force_full_interval": STATE.tea_force_full_interval,
             "dry_run": STATE.hareskip_dry_run,
-            "auto_row_index": STATE.auto_ujicache_row_index,
-            "auto_row_name": STATE.auto_ujicache_row_name,
+            "auto_row_index": STATE.auto_teacache_row_index,
+            "auto_row_name": STATE.auto_teacache_row_name,
         },
         "forced_full": True,
         "rel_l1_definition": (
