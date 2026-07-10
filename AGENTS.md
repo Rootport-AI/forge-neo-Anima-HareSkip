@@ -21,9 +21,10 @@ Retained UI:
 
 - Top-level accordion: `HareSkip` (`elem_id="hareskip-panel"`)
 - `Enable HareSkip` checkbox — overall gate, retained from the predecessor extension's equivalent enable checkbox
-- Mode selector: `gr.Radio(["HareSkip", "TeaCache"], elem_id="hareskip-mode")`, default `HareSkip`, exclusive
-- HareSkip-mode group (`hare-*` controls): aggressiveness slider, skip seed offset, expected-skip estimate
+- Mode selector: `gr.Radio(["HareSkip", "TeaCache", "Manual Skip"], elem_id="hareskip-mode")`, default `HareSkip`, exclusive
+- HareSkip-mode group (`hare-*` controls): aggressiveness slider, skip seed offset, expected-skip estimate, and the dual-thumb Skip window (`hare-skip-window`) / Zone boundaries (`hare-zone-boundaries`) `gradio_rangeslider.RangeSlider` controls (plain start/end/low/high `gr.Slider` fallback when RangeSlider is unavailable)
 - TeaCache-mode group (`tea-*` controls): preset, threshold, coefficient profile, `p_Anima(x)` display, start/end percent, max skip streak, force full interval, Auto Tea mode sub-accordion
+- Manual Skip-mode group (`hareskip/manual_skip.py`): a single `Manual skip steps` text box (comma-separated 1-based step numbers); parsed/validated against the run's `p.steps` in `before_process`, aborting with a `RuntimeError` on bad input
 - ResRefine section (`resrefine-*` controls, always visible regardless of mode): formula, prediction strength, Taylor2 curve strength, slope/curve EMA smoothing, use-prediction-after-progress, apply-prediction-from-skip, cache device
 - Sub-accordion: `Debug log mode`
 
@@ -51,7 +52,7 @@ Also removed in this fork: the legacy metadata clearer helper and its call site 
 - `TEA_PRESET_REGISTRY` in `state.py` is the single source of truth for both TeaCache coefficient profiles and their recommended Start/End windows. Add presets there; coefficients and the `p_Anima(x)` display follow automatically.
 - **TeaCache-mode numerics must not change.** The TeaCache decision path (`_tea_update_slot`, `_tea_force_full_reason`, `_cache_poly1d`, the accumulator/threshold logic) is renamed from the predecessor extension but must stay bit-identical in behavior. Mode dispatch must never alter Tea-mode numerics.
 - Naming discipline: use only `skip_probability` / `skip_density` style names for HareSkip's probability concepts. Never introduce `skip_score`, `fatal_score`, or `top_k` — these were explicitly rejected in the design spec because they imply a deterministic top-K schedule, which this method deliberately avoids. Top-K selection must not be implemented anywhere in `skip_pattern.py` or `probability_models.py`.
-- Do not confuse `hareskip_mode` (the skip-strategy selector, values `MODE_HARESKIP` / `MODE_TEACACHE`) with `hareskip_debug_mode` (the diagnostics-log mode key). They are separate settings keys.
+- Do not confuse `hareskip_mode` (the skip-strategy selector, values `MODE_HARESKIP` / `MODE_TEACACHE` / `MODE_MANUAL`) with `hareskip_debug_mode` (the diagnostics-log mode key). They are separate settings keys.
 
 ## 3-Point UI Argument Sync Rule
 
@@ -61,7 +62,7 @@ The UI arguments produced by `hareskip/script.py` `ui()` must stay in lockstep a
 2. the positional signature of `RuntimeState.apply_options` in `hareskip/state.py` (order and count),
 3. `hareskip/constants.py` `UI_ARG_ORDER` (canonical ordered name list) and `EXPECTED_UI_ARG_COUNT` (`len(UI_ARG_ORDER)`).
 
-If any of the three drifts out of sync, generation options are silently applied to the wrong slots — this is the single highest-risk failure mode in this codebase. `script.py` sets `_EXPECTED_UI_ARG_COUNT` from `constants.EXPECTED_UI_ARG_COUNT`. Currently there are **29 arguments** (the original 26 pre-fork arguments keep their positions; `hareskip_mode`, `hareskip_aggressiveness`, and `hareskip_skip_seed_offset` are appended at the end).
+If any of the three drifts out of sync, generation options are silently applied to the wrong slots — this is the single highest-risk failure mode in this codebase. `script.py` sets `_EXPECTED_UI_ARG_COUNT` from `constants.EXPECTED_UI_ARG_COUNT`. Currently there are **34 arguments** (the original 26 pre-fork arguments keep their positions; `hareskip_mode`, `hareskip_aggressiveness`, `hareskip_skip_seed_offset`, then the four skip-window / zone-boundary scalars `hareskip_window_start`, `hareskip_window_end`, `hareskip_zone_low`, `hareskip_zone_high`, and finally `manual_skip_steps` are appended at the end).
 
 `tests/test_arg_sync.py` enforces this statically and without importing gradio or Forge:
 
@@ -74,11 +75,12 @@ When adding/removing a UI control wired to settings, update all three (the `ui()
 
 ## Mode Dispatch Seam
 
-`hareskip/patcher.py` `_hareskip_forward_body` is the single seam where the two skip-decision strategies diverge; everything else (embed, t_embedder, blocks loop, final_layer, unpatchify, ResRefine residual application) is shared.
+`hareskip/patcher.py` `_hareskip_forward_body` is the single seam where the three skip-decision strategies diverge; everything else (embed, t_embedder, blocks loop, final_layer, unpatchify, ResRefine residual application) is shared.
 
-- **Shared force-full checks first.** `_shared_force_full_reason` (mirrors `first_call` / `missing_residual` from `_tea_force_full_reason`) is evaluated *before* either mode's own decision logic, in both modes, so a skip can never be applied before a residual exists for that slot.
+- **Shared force-full checks first.** `_shared_force_full_reason` (mirrors `first_call` / `missing_residual` from `_tea_force_full_reason`) is evaluated *before* any mode's own decision logic, in all three modes, so a skip can never be applied before a residual exists for that slot.
 - **TeaCache path is bit-identical.** When `STATE.hareskip_mode == MODE_TEACACHE`, the original accumulator/threshold/`_tea_force_full_reason` path runs unchanged (renamed only).
-- **HareSkip path dispatches through `STATE.hareskip_pattern`.** When `STATE.hareskip_mode == MODE_HARESKIP`, `_hareskip_should_calc(step_index)` consults the per-generation `SkipPattern` (see below) instead of the accumulator. HareSkip mode does not consult Tea-only force-full reasons (`outside_progress` / `force_full_interval` / `max_skip_streak`) — streak and guard logic belong to the pattern itself.
+- **HareSkip path dispatches through `STATE.hareskip_pattern`.** When `STATE.hareskip_mode == MODE_HARESKIP`, `_hareskip_should_calc(step_index)` consults the per-generation `SkipPattern` (see below) instead of the accumulator. HareSkip mode does not consult Tea-only force-full reasons (`outside_progress` / `force_full_interval` / `max_skip_streak`) — streak and window logic belong to the pattern itself.
+- **Manual Skip path is a fixed set membership.** When `STATE.hareskip_mode == MODE_MANUAL`, a step is skipped iff its 1-based index is in the validated `STATE.manual_skip_parsed` list — no pattern, window, zone, streak, or probability machinery. The shared force-full checks still run first (`first_call` / `missing_residual`).
 - **Exceptions must never propagate out of `_hareskip_should_calc`.** The whole body is wrapped in try/except and returns `True` (full calculation) on any error, logging at most once per generation (`hareskip_should_calc_failed`). This is required because the outer patched forward (`hareskip_forward`) itself falls back to the original unpatched `Anima.forward` on any exception escaping `_hareskip_forward_body` — HareSkip decision logic must never trigger that outer fallback path; it should degrade internally instead.
 - HareSkip mode also skips the modulated-input + rel_l1 computation entirely (it doesn't need it), except when calibration capture is active (a Tea-oriented debug feature that still needs rel_l1 and forces full compute every step in either mode).
 
@@ -112,8 +114,9 @@ Nothing in `skip_pattern.py` needs to change — `generate_skip_pattern` looks t
 - `hareskip/script.py`: Gradio UI and generation-time patch selection.
 - `hareskip/state.py`: settings snapshot, `RuntimeState`, `TEA_PRESET_REGISTRY`, `apply_options`.
 - `hareskip/patcher.py`: HareSkip monkey patch implementation, mode dispatch, and restore logic.
-- `hareskip/skip_pattern.py`: pure stochastic pattern generation (guards, zones, streak constraint, seed derivation).
+- `hareskip/skip_pattern.py`: pure stochastic pattern generation (skip window, zones, streak constraint, seed derivation).
 - `hareskip/probability_models.py`: pure skip-probability model registry (`sigmoid_band_v0.1` built in).
+- `hareskip/manual_skip.py`: pure Manual Skip step-list parsing/validation (`parse_manual_steps` / `validate_manual_steps`, `ManualSkipError`).
 - `hareskip/resrefine.py`: residual prediction/validation/EMA, extracted from the patcher.
 - `hareskip/forge_introspection.py`: sigma-schedule and model-structure introspection helpers.
 - `hareskip/diagnostics.py`: console snapshots and summaries.

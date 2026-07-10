@@ -3,10 +3,10 @@
 - 設計確定: 2026-07-10
 - 実装ステータス: 実装済み（2026-07-10）
 - 設計確定時 HEAD コミット: `03e0acc0d3cd12889c11bd34612558630956d69e`
-- 対象: HareSkip 拡張への追加モード「Manual Skip」（`hareskip/manual_skip.py` 新設予定）
+- 対象: HareSkip 拡張への追加モード「Manual Skip」（`hareskip/manual_skip.py` として実装済み）
 - 関連文書: [`docs/SPEC-alpha.md`](SPEC-alpha.md)（現行 α版仕様。UI構造・引数同期・infotext方式の正典）、[`docs/HANDOFF-next-session.md`](HANDOFF-next-session.md) §4.5（本機能が奉仕する再キャリブレーション実験計画）
 
-本書は Manual Skip mode の要件定義・入力/検証/動作仕様・設計をまとめた確定仕様である。すべてのキー名・関数名は本書執筆時点のリポジトリ実コード（`hareskip/*.py`, HEAD=`03e0acc`）に対して確認済み。未決事項は無く、実装はユーザーのゴーサイン後に行う。
+本書は Manual Skip mode の要件定義・入力/検証/動作仕様・設計をまとめた確定仕様である。設計確定時のキー名・関数名は当時のリポジトリ実コード（`hareskip/*.py`, HEAD=`03e0acc`）に対して確認済み。**本機能は `a67f559`（2026-07-10）で実装済み**（`hareskip/manual_skip.py`, `tests/test_manual_skip.py`）であり、以下の §7 実装ガイド・§8 は設計確定時点の記述を保存した記録である。実装後の正典は実コードおよび `docs/SPEC-alpha.md`（3 点同期・infotext）を参照。
 
 ---
 

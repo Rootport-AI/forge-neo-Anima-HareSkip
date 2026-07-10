@@ -1,7 +1,7 @@
 # HareSkip 次セッション向けハンドアウト
 
-- 作成日: 2026-07-10
-- HEAD コミット: `5520a92188be7dfe998633349f3fa4cb5a5ce225`（branch `main`, clean, push 済み）
+- 作成日: 2026-07-10（α+1・Manual Skip mode 追加後に更新）
+- HEAD コミット: `a67f5594602083a50d23c3966542290f0ab78e43`（branch `main`, clean）
 
 このファイルは、次の Claude セッション（またはユーザー）が再調査ゼロで作業を引き継ぐためのハンドオフである。設計の正典は [`docs/HareSkip-design.md`](HareSkip-design.md)、要件・設計・仕様の統合資料は [`docs/SPEC-alpha.md`](SPEC-alpha.md)。
 
@@ -9,24 +9,25 @@
 
 ## 1. 現在地
 
-α版は実装完了・push 済み。**実機検証は未実施**（開発マシンに Forge/GPU が無いため）。
+α版＋α+1（3 ゾーン化・RangeSlider・Manual Skip mode）は実装完了。**実機検証は未実施**（開発マシンに Forge/GPU が無いため）。
 
-コミット（`main` 直上、8 件、すべて `Co-Authored-By: Claude Fable 5`）:
+コミット（`main` 直上、抜粋・新しい順、すべて `Co-Authored-By: Claude Fable 5`）:
 
 | hash | 内容 |
 | --- | --- |
-| `b66723a` | chore: UjiCache ソースを HareSkip スケルトンとして取込 |
-| `f2ee257` | refactor: Tea/ResRefine 名前空間分割 |
-| `dd13563` | feat: Auto Uji mode → Auto Tea mode リネーム |
-| `cc11b22` | feat: 純粋モジュール skip_pattern + probability_models 追加 |
-| `07ad471` | feat: patcher に HareSkip stochastic モードディスパッチ追加 |
-| `7d9c1ca` | feat: UI 再構成（HareSkip/TeaCache モード selector） |
-| `0be9ebb` | feat: infotext/診断を Tea/Hare/ResRefine に分割 |
-| `5520a92` | docs: README/AGENTS/CHANGELOG/NOTICE を HareSkip 用に書き直し（= HEAD） |
+| `a67f559` | feat: Manual Skip mode 追加（明示ステップ指定・独立モジュール、= HEAD） |
+| `54cf89b` | docs: Manual Skip mode 仕様書追加（設計確定） |
+| `03e0acc` | docs: 2026-07-10 ブレインストームの再較正実験計画を追加 |
+| `aaa2aea` | feat: skip window / zone の dual-thumb RangeSlider コントロール追加 |
+| `84bcfb4` | feat: skip_pattern の skip window / zone boundaries をパラメータ化 |
+| `074462e` | feat: max-skip-streak を 3 ゾーンモデルに（final ゾーン廃止） |
+| `b337e36` | docs: UjiCache 較正履歴をアーカイブ、ResRefine EMA notes 書き直し |
+| `f2641b3` | docs: α版統合仕様書と次セッションハンドオフ追加 |
+| `5520a92` | docs: README/AGENTS/CHANGELOG/NOTICE を HareSkip 用に書き直し |
 
-- **テスト**: `pytest tests/ -q` → **52 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py`）。gradio/Forge を import せず実行可能。
-- **済み**: 純粋モジュール実装・単体テスト、モードディスパッチ、スケジュール捕捉ヘルパ、UI 再構成、33 引数 3 点同期（α+1 で skip window / zone boundaries の 4 スカラーを追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、infotext 分割、docs 一式。
-- **未**: 実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性）。§3 のチェックリストが対象。
+- **テスト**: `pytest tests/ -q` → **87 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py` / `test_manual_skip.py`）。gradio/Forge を import せず実行可能。
+- **済み**: 純粋モジュール実装・単体テスト、3 モードディスパッチ（HareSkip / TeaCache / Manual Skip）、スケジュール捕捉ヘルパ、UI 再構成、**34 引数 3 点同期**（α+1 で skip window / zone boundaries の 4 スカラー、Manual Skip mode で `manual_skip_steps` を末尾追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、3 ゾーン max-skip-streak（final ゾーン廃止）、ユーザー設定可能 skip window（旧自動ガード置換）、Manual Skip mode（`hareskip/manual_skip.py`）、infotext 分割、docs 一式。
+- **未**: 実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性、Manual Skip 動作）。§3 のチェックリストが対象。
 
 ---
 
@@ -37,10 +38,12 @@
 | ファイル | 役割 |
 | --- | --- |
 | `scripts/hareskip.py` | Forge エントリ（3 行 re-export）。 |
+| `requirements.txt` | 唯一の依存 `gradio_rangeslider==0.0.8`（dual-thumb RangeSlider 用。Forge Neo core 同梱、不在時はプレーン Slider に劣化）。 |
 | `hareskip/__init__.py` | パッケージ初期化。 |
-| `hareskip/constants.py` | **純粋**。モード ID、`UI_ARG_ORDER`（33）、`EXPECTED_UI_ARG_COUNT`。 |
-| `hareskip/skip_pattern.py` | **純粋**。stochastic pattern 生成（z, ユーザー設定可能ゾーン境界, skip window, streak 刈り込み, seed 導出, exact-target）。 |
+| `hareskip/constants.py` | **純粋**。モード ID（HareSkip / TeaCache / Manual Skip の 3 種）、`UI_ARG_ORDER`（34）、`EXPECTED_UI_ARG_COUNT`。 |
+| `hareskip/skip_pattern.py` | **純粋**。stochastic pattern 生成（z, ユーザー設定可能ゾーン境界〔3 ゾーン〕, skip window, streak 刈り込み, seed 導出, exact-target）。 |
 | `hareskip/probability_models.py` | **純粋**。`p_skip` レジストリ。`sigmoid_band_v0.1` 組み込み。 |
+| `hareskip/manual_skip.py` | **純粋**。Manual Skip mode のステップ列パース/検証（`parse_manual_steps` / `validate_manual_steps` / `ManualSkipError`）。 |
 | `hareskip/script.py` | Gradio UI（`ui()`）と生成時フック、infotext 書き込み。 |
 | `hareskip/state.py` | 設定スナップショット、`RuntimeState`、`TEA_PRESET_REGISTRY`、`apply_options`。 |
 | `hareskip/patcher.py` | `Anima._forward` monkey patch、モードディスパッチ、`_hareskip_should_calc`、`_hareskip_ensure_pattern`、restore。 |
@@ -50,10 +53,11 @@
 | `hareskip/calibration_capture.py` | TeaCache 係数再較正用 JSONL 捕捉（Tea 専用デバッグ）。 |
 | `hareskip/auto_teacache.py` | Auto Tea mode CSV 解析/適用。 |
 | `hareskip/callbacks.py` `settings.py` `model_detect.py` `tensor_dump.py` `timing.py` `logging.py` | コールバック配線 / 設定 / モデル判定 / テンソルダンプ / 計時 / ロガー（`[HareSkip]`）。 |
-| `tests/test_arg_sync.py` | 3 点同期の静的検証。 |
-| `tests/test_probability_models.py` `tests/test_skip_pattern.py` | 純粋モジュールの単体テスト。 |
+| `tests/test_arg_sync.py` | 3 点同期の静的検証（34 引数）。 |
+| `tests/test_probability_models.py` `tests/test_skip_pattern.py` `tests/test_manual_skip.py` | 純粋モジュールの単体テスト。 |
 | `docs/HareSkip-design.md` | 設計正典（stochastic skip density）。 |
 | `docs/SPEC-alpha.md` | 要件・設計・仕様の統合資料。 |
+| `docs/ManualSkip-spec.md` | Manual Skip mode 仕様書（実装済み）。 |
 
 ---
 

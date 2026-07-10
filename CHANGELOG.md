@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## Unreleased (post-alpha)
+
+- Changed: **max-skip-streak model reduced from 4 zones to 3** — the former `final` zone (`z >= 4`, streak 1, "final-polish protection") was removed on 2026-07-10 after stratified re-analysis showed its supporting density dip was a selection-bias artifact. Zones are now `danger` (`z < low` → streak 1) / `middle` (`low <= z < high` → streak 2) / `safe` (`z >= high` → streak 3); `safe` extends to `z >= 0`. End-of-generation moderation is left entirely to the skip-probability taper. See `docs/SPEC-alpha.md` §4.3.
+- Changed: **the automatic ~5% first/last guard rule (`guard_count = max(1, round(0.05 * N))`) was replaced by a user-configurable skip window** in the progress domain (default `(0.05, 0.95)`, which reproduces the old guards for 30 steps). WYSIWYG: `(0.0, 1.0)` makes every step eligible — there is no hidden last-step safety net. `SkipPattern` now carries `skip_window` / `zone_boundaries` / `guarded_steps` instead of `guard_count`.
+- Added: **zone boundaries are now user-configurable** — the `(low, high)` `z` cutoffs for danger/middle/safe (default `(-4.0, 0.0)`, range `-8.0..+8.0`) are exposed in HareSkip mode.
+- Added: **dual-thumb RangeSlider controls** for Skip window (progress) and Zone boundaries (logSNR proxy), using `gradio_rangeslider==0.0.8` (added as the sole `requirements.txt` dependency). Degrades automatically to plain start/end and low/high `gr.Slider`s when RangeSlider is unavailable.
+- Added: **Manual Skip mode** — a third exclusive skip-strategy Radio choice (`hareskip/manual_skip.py`). Type a comma-separated list of 1-based step numbers to skip; the list is parsed and validated against the run's `p.steps` before generation, aborting with a `RuntimeError` on non-numeric tokens, out-of-range steps, or step `1` (physically unskippable) rather than silently degrading. Built for the recalibration experiments in `docs/HANDOFF-next-session.md` §4.5; see `docs/ManualSkip-spec.md`.
+- Changed: UI mode selector is now `HareSkip` / `TeaCache` / `Manual Skip` (was `HareSkip` / `TeaCache`).
+- Changed: UI argument count is now **34** (was 29): added the four skip-window / zone-boundary scalars (`hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`) and `manual_skip_steps`.
+- Added infotext keys: `Hare skip_window`, `Hare zone_boundaries` (HareSkip mode), and `Manual skipped_steps` (Manual Skip mode). Removed the former `Hare guard_count`.
+
 ## 0.1.0 (alpha)
 
 - Forked from UjiCache; renamed the package to `hareskip` and the Forge entrypoint to `scripts/hareskip.py`.
