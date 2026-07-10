@@ -10,36 +10,36 @@ MODE_OFF = ""
 MODE_DIAGNOSE = "Diagnose only"
 MODES = [MODE_OFF, MODE_DIAGNOSE]
 
-UJICACHE_PRESET_CUSTOM = "Custom"
-UJICACHE_PRESETS = [UJICACHE_PRESET_CUSTOM]
+TEA_PRESET_CUSTOM = "Custom"
+TEA_PRESETS = [TEA_PRESET_CUSTOM]
 
-UJICACHE_FORMULA_TEACACHE = "TeaCache (residual only)"
-UJICACHE_FORMULA_LINEAR = "Linear extrapolation"
-UJICACHE_FORMULA_TAYLOR2 = "Taylor2 curve"
-UJICACHE_FORMULAS = [
-    UJICACHE_FORMULA_TEACACHE,
-    UJICACHE_FORMULA_LINEAR,
-    UJICACHE_FORMULA_TAYLOR2,
+RESREFINE_FORMULA_REUSE = "Reuse (residual only)"
+RESREFINE_FORMULA_LINEAR = "Linear extrapolation"
+RESREFINE_FORMULA_TAYLOR2 = "Taylor2 curve"
+RESREFINE_FORMULAS = [
+    RESREFINE_FORMULA_REUSE,
+    RESREFINE_FORMULA_LINEAR,
+    RESREFINE_FORMULA_TAYLOR2,
 ]
 
-UJICACHE_CACHE_DEVICE_CUDA = "cuda"
-UJICACHE_CACHE_DEVICE_CPU = "cpu"
-UJICACHE_CACHE_DEVICES = [
-    UJICACHE_CACHE_DEVICE_CUDA,
-    UJICACHE_CACHE_DEVICE_CPU,
+RESREFINE_CACHE_DEVICE_CUDA = "cuda"
+RESREFINE_CACHE_DEVICE_CPU = "cpu"
+RESREFINE_CACHE_DEVICES = [
+    RESREFINE_CACHE_DEVICE_CUDA,
+    RESREFINE_CACHE_DEVICE_CPU,
 ]
 
-UJICACHE_SOURCE_FIRST_BLOCK_SHIFT = "first_block_shift"
-UJICACHE_SOURCE_TIMESTEP_EMBEDDING = "timestep_embedding"
-UJICACHE_MODULATED_SOURCES = [
-    UJICACHE_SOURCE_FIRST_BLOCK_SHIFT,
-    UJICACHE_SOURCE_TIMESTEP_EMBEDDING,
+TEA_SOURCE_FIRST_BLOCK_SHIFT = "first_block_shift"
+TEA_SOURCE_TIMESTEP_EMBEDDING = "timestep_embedding"
+TEA_MODULATED_SOURCES = [
+    TEA_SOURCE_FIRST_BLOCK_SHIFT,
+    TEA_SOURCE_TIMESTEP_EMBEDDING,
 ]
 
-UJICACHE_PROFILE_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = "Anima 2B 30step first_block_shift"
-UJICACHE_PROFILE_IDENTITY = "Identity estimate"
+TEA_PROFILE_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = "Anima 2B 30step first_block_shift"
+TEA_PROFILE_IDENTITY = "Identity estimate"
 
-UJICACHE_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = [
+TEA_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = [
     5954.035087553969,
     -2410.0426539290293,
     349.24023850217395,
@@ -51,7 +51,7 @@ UJICACHE_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = [
 # polynomial coefficients (descending powers) and the recommended Start/End
 # progress window per profile.
 #
-# "window" semantics, consumed by ujicache_window_for_profile():
+# "window" semantics, consumed by tea_window_for_profile():
 #   (start, end) -> selecting this profile moves the Start/End sliders there.
 #   None         -> leave the Start/End sliders untouched (Identity estimate).
 #
@@ -61,12 +61,12 @@ UJICACHE_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT = [
 # window (progress = step_index / (steps - 1), steps = 30). The names embed the
 # fit step range for traceability. daraskme's legacy profile resets to the
 # original 0.05/0.95 window; Identity carries no window.
-UJICACHE_PRESET_REGISTRY: dict[str, dict[str, Any]] = {
-    UJICACHE_PROFILE_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT: {
-        "coefficients": UJICACHE_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT,
+TEA_PRESET_REGISTRY: dict[str, dict[str, Any]] = {
+    TEA_PROFILE_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT: {
+        "coefficients": TEA_COEFFICIENTS_ANIMA_2B_30STEP_FIRST_BLOCK_SHIFT,
         "window": (0.05, 0.95),
     },
-    UJICACHE_PROFILE_IDENTITY: {
+    TEA_PROFILE_IDENTITY: {
         "coefficients": [1.0, 0.0],
         "window": None,
     },
@@ -169,29 +169,29 @@ UJICACHE_PRESET_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 # Default profile is now a re-calibrated preset (was daraskme's legacy profile).
-UJICACHE_PROFILE_DEFAULT = 'ER-SDE-Beta_30steps_Shift3_optimal(fit14-22step)'
+TEA_PROFILE_DEFAULT = 'ER-SDE-Beta_30steps_Shift3_optimal(fit14-22step)'
 
-UJICACHE_COEFFICIENT_PROFILES = list(UJICACHE_PRESET_REGISTRY)
+TEA_COEFFICIENT_PROFILES = list(TEA_PRESET_REGISTRY)
 
 
-def ujicache_coefficients_for_profile(profile: str) -> list[float]:
+def tea_coefficients_for_profile(profile: str) -> list[float]:
     """Polynomial coefficients (descending powers) for a coefficient profile.
 
     Single source of truth shared by the runtime skip decision and the read-only
     p_Anima(x) UI display. Unknown profiles fall back to the default preset.
     """
-    entry = UJICACHE_PRESET_REGISTRY.get(profile) or UJICACHE_PRESET_REGISTRY[UJICACHE_PROFILE_DEFAULT]
+    entry = TEA_PRESET_REGISTRY.get(profile) or TEA_PRESET_REGISTRY[TEA_PROFILE_DEFAULT]
     return entry["coefficients"]
 
 
-def ujicache_window_for_profile(profile: str) -> tuple[float, float] | None:
+def tea_window_for_profile(profile: str) -> tuple[float, float] | None:
     """Recommended (start, end) progress window for a profile, or None.
 
     None means "leave the Start/End sliders untouched" (Identity estimate). A
     tuple means selecting the profile should move the sliders there — the 24
     calibrated presets to their fit range, daraskme back to 0.05/0.95.
     """
-    entry = UJICACHE_PRESET_REGISTRY.get(profile)
+    entry = TEA_PRESET_REGISTRY.get(profile)
     if entry is None:
         return None
     return entry["window"]
@@ -200,7 +200,7 @@ def ujicache_window_for_profile(profile: str) -> tuple[float, float] | None:
 _PROFILE_SHIFT_PATTERN = re.compile(r"Shift(\d+)")
 
 
-def ujicache_expected_shift_for_profile(profile: str) -> int | None:
+def tea_expected_shift_for_profile(profile: str) -> int | None:
     """The Shift value a calibrated preset was fitted for, parsed from its name.
 
     Returns the integer in `..._Shift<n>_...`, or None when the profile carries
@@ -217,15 +217,15 @@ def ujicache_expected_shift_for_profile(profile: str) -> int | None:
         return None
 
 
-def ujicache_modulated_source_for_profile(profile: str) -> str:
+def tea_modulated_source_for_profile(profile: str) -> str:
     """Modulated source is derived from the coefficient profile, not chosen in the UI.
 
     Identity estimate pairs with timestep_embedding; every other profile uses
     first_block_shift. This is the single source of truth for that mapping.
     """
-    if profile == UJICACHE_PROFILE_IDENTITY:
-        return UJICACHE_SOURCE_TIMESTEP_EMBEDDING
-    return UJICACHE_SOURCE_FIRST_BLOCK_SHIFT
+    if profile == TEA_PROFILE_IDENTITY:
+        return TEA_SOURCE_TIMESTEP_EMBEDDING
+    return TEA_SOURCE_FIRST_BLOCK_SHIFT
 
 
 @dataclass
@@ -235,27 +235,27 @@ class RuntimeState:
     mode: str = MODE_OFF
     print_timing_log: bool = True
     verbose_diagnose_log: bool = False
-    dump_ujicache_residual: bool = False
+    dump_resrefine_residual: bool = False
 
     hareskip_enabled: bool = False
-    ujicache_preset: str = UJICACHE_PRESET_CUSTOM
-    ujicache_threshold: float = 0.07
-    ujicache_start_percent: float = 0.48
-    ujicache_end_percent: float = 0.76
-    ujicache_formula: str = UJICACHE_FORMULA_TEACACHE
-    ujicache_use_prediction_after_progress: float = 0.0
-    ujicache_apply_prediction_from_skip: int = 2
-    ujicache_prediction_strength: float = 0.50
-    ujicache_taylor2_curve_strength: float = 0.25
-    ujicache_slope_ema_smoothing: float = 0.0
-    ujicache_curve_ema_smoothing: float = 0.0
-    ujicache_cache_device: str = UJICACHE_CACHE_DEVICE_CUDA
-    ujicache_modulated_source: str = UJICACHE_SOURCE_FIRST_BLOCK_SHIFT
-    ujicache_coefficient_profile: str = UJICACHE_PROFILE_DEFAULT
-    ujicache_max_skip_streak: int = 0
-    ujicache_force_full_interval: int = 0
-    ujicache_dry_run: bool = False
-    ujicache_verbose_trace: bool = False
+    tea_preset: str = TEA_PRESET_CUSTOM
+    tea_threshold: float = 0.07
+    tea_start_percent: float = 0.48
+    tea_end_percent: float = 0.76
+    resrefine_formula: str = RESREFINE_FORMULA_REUSE
+    resrefine_use_prediction_after_progress: float = 0.0
+    resrefine_apply_prediction_from_skip: int = 2
+    resrefine_prediction_strength: float = 0.50
+    resrefine_taylor2_curve_strength: float = 0.25
+    resrefine_slope_ema_smoothing: float = 0.0
+    resrefine_curve_ema_smoothing: float = 0.0
+    resrefine_cache_device: str = RESREFINE_CACHE_DEVICE_CUDA
+    tea_modulated_source: str = TEA_SOURCE_FIRST_BLOCK_SHIFT
+    tea_coefficient_profile: str = TEA_PROFILE_DEFAULT
+    tea_max_skip_streak: int = 0
+    tea_force_full_interval: int = 0
+    hareskip_dry_run: bool = False
+    hareskip_verbose_trace: bool = False
     capture_calibration_pairs: bool = False
 
     auto_ujicache_enabled: bool = False
@@ -284,9 +284,9 @@ class RuntimeState:
     hareskip_full_calcs: int = 0
     hareskip_skips: int = 0
     hareskip_skipped_steps: list[int] = field(default_factory=list)
-    ujicache_prediction_used: int = 0
+    resrefine_prediction_used: int = 0
     hareskip_fallback_used: int = 0
-    ujicache_dry_run_predictions: int = 0
+    hareskip_dry_run_predictions: int = 0
     hareskip_first_full_calcs: int = 0
     hareskip_forced_full_calcs: int = 0
     hareskip_fallbacks: int = 0
@@ -310,7 +310,7 @@ class RuntimeState:
     calibration_capture_errors: int = 0
     calibration_capture_warned_reasons: set[str] = field(default_factory=set)
 
-    ujicache_shift_warned_keys: set[str] = field(default_factory=set)
+    tea_shift_warned_keys: set[str] = field(default_factory=set)
 
     generation_logged: bool = False
     patches: dict[str, Any] = field(default_factory=dict)
@@ -346,24 +346,24 @@ class RuntimeState:
         mode: str,
         print_timing_log: bool,
         verbose_diagnose_log: bool,
-        dump_ujicache_residual: bool,
-        ujicache_preset: str = UJICACHE_PRESET_CUSTOM,
-        ujicache_threshold: float = 0.07,
-        ujicache_start_percent: float = 0.48,
-        ujicache_end_percent: float = 0.76,
-        ujicache_formula: str = UJICACHE_FORMULA_TEACACHE,
-        ujicache_use_prediction_after_progress: float = 0.0,
-        ujicache_apply_prediction_from_skip: int = 2,
-        ujicache_prediction_strength: float = 0.50,
-        ujicache_taylor2_curve_strength: float = 0.25,
-        ujicache_slope_ema_smoothing: float = 0.0,
-        ujicache_curve_ema_smoothing: float = 0.0,
-        ujicache_cache_device: str = UJICACHE_CACHE_DEVICE_CUDA,
-        ujicache_coefficient_profile: str = UJICACHE_PROFILE_DEFAULT,
-        ujicache_max_skip_streak: int = 0,
-        ujicache_force_full_interval: int = 0,
-        ujicache_dry_run: bool = False,
-        ujicache_verbose_trace: bool = False,
+        dump_resrefine_residual: bool,
+        tea_preset: str = TEA_PRESET_CUSTOM,
+        tea_threshold: float = 0.07,
+        tea_start_percent: float = 0.48,
+        tea_end_percent: float = 0.76,
+        resrefine_formula: str = RESREFINE_FORMULA_REUSE,
+        resrefine_use_prediction_after_progress: float = 0.0,
+        resrefine_apply_prediction_from_skip: int = 2,
+        resrefine_prediction_strength: float = 0.50,
+        resrefine_taylor2_curve_strength: float = 0.25,
+        resrefine_slope_ema_smoothing: float = 0.0,
+        resrefine_curve_ema_smoothing: float = 0.0,
+        resrefine_cache_device: str = RESREFINE_CACHE_DEVICE_CUDA,
+        tea_coefficient_profile: str = TEA_PROFILE_DEFAULT,
+        tea_max_skip_streak: int = 0,
+        tea_force_full_interval: int = 0,
+        hareskip_dry_run: bool = False,
+        hareskip_verbose_trace: bool = False,
         auto_ujicache_enabled: bool = False,
         auto_ujicache_csv: str = "",
         capture_calibration_pairs: bool = False,
@@ -373,54 +373,54 @@ class RuntimeState:
         self.mode = _normalize_mode(mode) if self.debug_log_enabled else MODE_OFF
         self.print_timing_log = bool(print_timing_log)
         self.verbose_diagnose_log = bool(verbose_diagnose_log)
-        self.dump_ujicache_residual = bool(dump_ujicache_residual)
+        self.dump_resrefine_residual = bool(dump_resrefine_residual)
 
         self.hareskip_enabled = self.enabled
-        self.ujicache_preset = (
-            ujicache_preset if ujicache_preset in UJICACHE_PRESETS else UJICACHE_PRESET_CUSTOM
+        self.tea_preset = (
+            tea_preset if tea_preset in TEA_PRESETS else TEA_PRESET_CUSTOM
         )
-        self.ujicache_threshold = _clamp_float(ujicache_threshold, 0.0, 1.0)
-        self.ujicache_start_percent = _clamp_float(ujicache_start_percent, 0.0, 1.0)
-        self.ujicache_end_percent = _clamp_float(ujicache_end_percent, 0.0, 1.0)
-        if self.ujicache_start_percent > self.ujicache_end_percent:
-            self.ujicache_start_percent, self.ujicache_end_percent = (
-                self.ujicache_end_percent,
-                self.ujicache_start_percent,
+        self.tea_threshold = _clamp_float(tea_threshold, 0.0, 1.0)
+        self.tea_start_percent = _clamp_float(tea_start_percent, 0.0, 1.0)
+        self.tea_end_percent = _clamp_float(tea_end_percent, 0.0, 1.0)
+        if self.tea_start_percent > self.tea_end_percent:
+            self.tea_start_percent, self.tea_end_percent = (
+                self.tea_end_percent,
+                self.tea_start_percent,
             )
-        self.ujicache_formula = (
-            ujicache_formula if ujicache_formula in UJICACHE_FORMULAS else UJICACHE_FORMULA_TEACACHE
+        self.resrefine_formula = (
+            resrefine_formula if resrefine_formula in RESREFINE_FORMULAS else RESREFINE_FORMULA_REUSE
         )
-        self.ujicache_use_prediction_after_progress = _clamp_float(
-            ujicache_use_prediction_after_progress,
+        self.resrefine_use_prediction_after_progress = _clamp_float(
+            resrefine_use_prediction_after_progress,
             0.0,
             1.0,
         )
-        self.ujicache_apply_prediction_from_skip = _clamp_int(
-            ujicache_apply_prediction_from_skip,
+        self.resrefine_apply_prediction_from_skip = _clamp_int(
+            resrefine_apply_prediction_from_skip,
             1,
             3,
         )
-        self.ujicache_prediction_strength = _clamp_float(ujicache_prediction_strength, 0.0, 1.0)
-        self.ujicache_taylor2_curve_strength = _clamp_float(ujicache_taylor2_curve_strength, 0.0, 1.0)
-        self.ujicache_slope_ema_smoothing = _clamp_float(ujicache_slope_ema_smoothing, 0.0, 0.99)
-        self.ujicache_curve_ema_smoothing = _clamp_float(ujicache_curve_ema_smoothing, 0.0, 0.99)
-        self.ujicache_cache_device = (
-            ujicache_cache_device
-            if ujicache_cache_device in UJICACHE_CACHE_DEVICES
-            else UJICACHE_CACHE_DEVICE_CUDA
+        self.resrefine_prediction_strength = _clamp_float(resrefine_prediction_strength, 0.0, 1.0)
+        self.resrefine_taylor2_curve_strength = _clamp_float(resrefine_taylor2_curve_strength, 0.0, 1.0)
+        self.resrefine_slope_ema_smoothing = _clamp_float(resrefine_slope_ema_smoothing, 0.0, 0.99)
+        self.resrefine_curve_ema_smoothing = _clamp_float(resrefine_curve_ema_smoothing, 0.0, 0.99)
+        self.resrefine_cache_device = (
+            resrefine_cache_device
+            if resrefine_cache_device in RESREFINE_CACHE_DEVICES
+            else RESREFINE_CACHE_DEVICE_CUDA
         )
-        self.ujicache_coefficient_profile = (
-            ujicache_coefficient_profile
-            if ujicache_coefficient_profile in UJICACHE_COEFFICIENT_PROFILES
-            else UJICACHE_PROFILE_DEFAULT
+        self.tea_coefficient_profile = (
+            tea_coefficient_profile
+            if tea_coefficient_profile in TEA_COEFFICIENT_PROFILES
+            else TEA_PROFILE_DEFAULT
         )
-        self.ujicache_modulated_source = ujicache_modulated_source_for_profile(
-            self.ujicache_coefficient_profile
+        self.tea_modulated_source = tea_modulated_source_for_profile(
+            self.tea_coefficient_profile
         )
-        self.ujicache_max_skip_streak = _clamp_int(ujicache_max_skip_streak, 0, 64)
-        self.ujicache_force_full_interval = _clamp_int(ujicache_force_full_interval, 0, 64)
-        self.ujicache_dry_run = bool(ujicache_dry_run)
-        self.ujicache_verbose_trace = bool(ujicache_verbose_trace)
+        self.tea_max_skip_streak = _clamp_int(tea_max_skip_streak, 0, 64)
+        self.tea_force_full_interval = _clamp_int(tea_force_full_interval, 0, 64)
+        self.hareskip_dry_run = bool(hareskip_dry_run)
+        self.hareskip_verbose_trace = bool(hareskip_verbose_trace)
 
         self.auto_ujicache_enabled = bool(auto_ujicache_enabled) and self.hareskip_enabled
         self.auto_ujicache_csv = str(auto_ujicache_csv or "")
@@ -434,7 +434,7 @@ class RuntimeState:
         )
 
     def tensor_dump_requested(self) -> bool:
-        return self.dump_ujicache_residual or self.capture_calibration_pairs
+        return self.dump_resrefine_residual or self.capture_calibration_pairs
 
     def calibration_capture_active(self) -> bool:
         return self.enabled and self.debug_log_enabled and self.capture_calibration_pairs
@@ -455,9 +455,9 @@ class RuntimeState:
         self.hareskip_full_calcs = 0
         self.hareskip_skips = 0
         self.hareskip_skipped_steps.clear()
-        self.ujicache_prediction_used = 0
+        self.resrefine_prediction_used = 0
         self.hareskip_fallback_used = 0
-        self.ujicache_dry_run_predictions = 0
+        self.hareskip_dry_run_predictions = 0
         self.hareskip_first_full_calcs = 0
         self.hareskip_forced_full_calcs = 0
         self.hareskip_fallbacks = 0
@@ -484,7 +484,7 @@ class RuntimeState:
         if not self.enabled:
             self.status = "disabled"
         elif self.hareskip_enabled:
-            self.status = "experimental-ujicache"
+            self.status = "experimental-hareskip"
         elif self.mode == MODE_DIAGNOSE:
             self.status = "diagnosing"
         else:

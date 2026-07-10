@@ -7,12 +7,12 @@ from typing import Any
 
 from .state import (
     STATE,
-    UJICACHE_COEFFICIENT_PROFILES,
-    UJICACHE_FORMULA_LINEAR,
-    UJICACHE_FORMULA_TEACACHE,
-    UJICACHE_FORMULA_TAYLOR2,
-    ujicache_modulated_source_for_profile,
-    ujicache_window_for_profile,
+    TEA_COEFFICIENT_PROFILES,
+    RESREFINE_FORMULA_LINEAR,
+    RESREFINE_FORMULA_REUSE,
+    RESREFINE_FORMULA_TAYLOR2,
+    tea_modulated_source_for_profile,
+    tea_window_for_profile,
 )
 
 
@@ -46,17 +46,19 @@ class AutoUjiParseResult:
 
 
 _FORMULA_ALIASES = {
-    "teacache": UJICACHE_FORMULA_TEACACHE,
-    "teacache (residual only)": UJICACHE_FORMULA_TEACACHE,
-    "residual": UJICACHE_FORMULA_TEACACHE,
-    "residual_only": UJICACHE_FORMULA_TEACACHE,
-    "linear": UJICACHE_FORMULA_LINEAR,
-    "linear_extrapolation": UJICACHE_FORMULA_LINEAR,
-    "linear extrapolation": UJICACHE_FORMULA_LINEAR,
-    "taylor2": UJICACHE_FORMULA_TAYLOR2,
-    "taylor2 curve": UJICACHE_FORMULA_TAYLOR2,
-    "taylor": UJICACHE_FORMULA_TAYLOR2,
-    "quadratic": UJICACHE_FORMULA_TAYLOR2,
+    "reuse": RESREFINE_FORMULA_REUSE,
+    "reuse (residual only)": RESREFINE_FORMULA_REUSE,
+    "teacache": RESREFINE_FORMULA_REUSE,
+    "teacache (residual only)": RESREFINE_FORMULA_REUSE,
+    "residual": RESREFINE_FORMULA_REUSE,
+    "residual_only": RESREFINE_FORMULA_REUSE,
+    "linear": RESREFINE_FORMULA_LINEAR,
+    "linear_extrapolation": RESREFINE_FORMULA_LINEAR,
+    "linear extrapolation": RESREFINE_FORMULA_LINEAR,
+    "taylor2": RESREFINE_FORMULA_TAYLOR2,
+    "taylor2 curve": RESREFINE_FORMULA_TAYLOR2,
+    "taylor": RESREFINE_FORMULA_TAYLOR2,
+    "quadratic": RESREFINE_FORMULA_TAYLOR2,
 }
 
 _SUPPORTED_COLUMNS = {
@@ -188,74 +190,74 @@ def parse_auto_ujicache_csv(text: str) -> AutoUjiParseResult:
 
 def apply_auto_ujicache_row_to_state(row: AutoUjiRow) -> None:
     if row.threshold is not None:
-        STATE.ujicache_threshold = _clamp_float(row.threshold, 0.0, 1.0)
+        STATE.tea_threshold = _clamp_float(row.threshold, 0.0, 1.0)
     if row.formula is not None:
-        STATE.ujicache_formula = row.formula
+        STATE.resrefine_formula = row.formula
     if row.prediction_strength is not None:
-        STATE.ujicache_prediction_strength = _clamp_float(
+        STATE.resrefine_prediction_strength = _clamp_float(
             row.prediction_strength,
             0.0,
             1.0,
         )
     if row.slope_ema_smoothing is not None:
-        STATE.ujicache_slope_ema_smoothing = _clamp_float(
+        STATE.resrefine_slope_ema_smoothing = _clamp_float(
             row.slope_ema_smoothing,
             0.0,
             0.99,
         )
     if row.curve_ema_smoothing is not None:
-        STATE.ujicache_curve_ema_smoothing = _clamp_float(
+        STATE.resrefine_curve_ema_smoothing = _clamp_float(
             row.curve_ema_smoothing,
             0.0,
             0.99,
         )
     if row.taylor2_curve_strength is not None:
-        STATE.ujicache_taylor2_curve_strength = _clamp_float(
+        STATE.resrefine_taylor2_curve_strength = _clamp_float(
             row.taylor2_curve_strength,
             0.0,
             1.0,
         )
     if row.apply_prediction_from_skip is not None:
-        STATE.ujicache_apply_prediction_from_skip = _clamp_int(
+        STATE.resrefine_apply_prediction_from_skip = _clamp_int(
             row.apply_prediction_from_skip,
             1,
             3,
         )
     if row.use_prediction_after_progress is not None:
-        STATE.ujicache_use_prediction_after_progress = _clamp_float(
+        STATE.resrefine_use_prediction_after_progress = _clamp_float(
             row.use_prediction_after_progress,
             0.0,
             1.0,
         )
     if row.max_skip_streak is not None:
-        STATE.ujicache_max_skip_streak = _clamp_int(row.max_skip_streak, 0, 64)
+        STATE.tea_max_skip_streak = _clamp_int(row.max_skip_streak, 0, 64)
     if row.force_full_interval is not None:
-        STATE.ujicache_force_full_interval = _clamp_int(
+        STATE.tea_force_full_interval = _clamp_int(
             row.force_full_interval,
             0,
             64,
         )
     if row.coefficient_profile is not None:
-        STATE.ujicache_coefficient_profile = row.coefficient_profile
-        STATE.ujicache_modulated_source = ujicache_modulated_source_for_profile(
+        STATE.tea_coefficient_profile = row.coefficient_profile
+        STATE.tea_modulated_source = tea_modulated_source_for_profile(
             row.coefficient_profile
         )
     # Window resolution (start/end independent): an explicit row value wins;
     # otherwise the selected profile's fit window applies; otherwise the current
     # STATE value is left untouched.
     profile_window = (
-        ujicache_window_for_profile(row.coefficient_profile)
+        tea_window_for_profile(row.coefficient_profile)
         if row.coefficient_profile is not None
         else None
     )
     if row.start_percent is not None:
-        STATE.ujicache_start_percent = _clamp_float(row.start_percent, 0.0, 1.0)
+        STATE.tea_start_percent = _clamp_float(row.start_percent, 0.0, 1.0)
     elif profile_window is not None:
-        STATE.ujicache_start_percent = profile_window[0]
+        STATE.tea_start_percent = profile_window[0]
     if row.end_percent is not None:
-        STATE.ujicache_end_percent = _clamp_float(row.end_percent, 0.0, 1.0)
+        STATE.tea_end_percent = _clamp_float(row.end_percent, 0.0, 1.0)
     elif profile_window is not None:
-        STATE.ujicache_end_percent = profile_window[1]
+        STATE.tea_end_percent = profile_window[1]
 
 
 def _row_values(header: list[str], cells: list[str]) -> dict[str, str | None]:
@@ -316,7 +318,7 @@ def _parse_profile(value: str | None, line: int) -> str | None:
     if value is None:
         return None
     profile = str(value).strip()
-    if profile not in UJICACHE_COEFFICIENT_PROFILES:
+    if profile not in TEA_COEFFICIENT_PROFILES:
         raise AutoUjiCsvError(
             f"line={line} column=coefficient_profile reason=unknown_profile value={value}"
         )

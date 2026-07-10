@@ -127,17 +127,17 @@ def _build_header(p: Any) -> dict[str, Any]:
         "shift": sampling.get("shift"),
         "shift_ui_distilled_cfg": _safe_float(getattr(p, "distilled_cfg_scale", None)),
         "model_sampling": sampling,
-        "ujicache": {
-            "threshold": STATE.ujicache_threshold,
-            "formula": STATE.ujicache_formula,
-            "modulated_source": STATE.ujicache_modulated_source,
-            "coefficient_profile": STATE.ujicache_coefficient_profile,
+        "hareskip": {
+            "threshold": STATE.tea_threshold,
+            "formula": STATE.resrefine_formula,
+            "modulated_source": STATE.tea_modulated_source,
+            "coefficient_profile": STATE.tea_coefficient_profile,
             "coefficients": _coefficients_snapshot(),
-            "start_percent": STATE.ujicache_start_percent,
-            "end_percent": STATE.ujicache_end_percent,
-            "max_skip_streak": STATE.ujicache_max_skip_streak,
-            "force_full_interval": STATE.ujicache_force_full_interval,
-            "dry_run": STATE.ujicache_dry_run,
+            "start_percent": STATE.tea_start_percent,
+            "end_percent": STATE.tea_end_percent,
+            "max_skip_streak": STATE.tea_max_skip_streak,
+            "force_full_interval": STATE.tea_force_full_interval,
+            "dry_run": STATE.hareskip_dry_run,
             "auto_row_index": STATE.auto_ujicache_row_index,
             "auto_row_name": STATE.auto_ujicache_row_name,
         },
@@ -164,9 +164,9 @@ def _model_sampling_snapshot() -> dict[str, Any]:
 
 def _coefficients_snapshot() -> list[float]:
     try:
-        from .patcher import _ujicache_coefficients
+        from .patcher import _tea_coefficients
 
-        return [float(value) for value in _ujicache_coefficients()]
+        return [float(value) for value in _tea_coefficients()]
     except Exception:
         return []
 

@@ -17,19 +17,19 @@ from .state import (
     MODE_OFF,
     MODES,
     STATE,
-    UJICACHE_CACHE_DEVICE_CUDA,
-    UJICACHE_CACHE_DEVICES,
-    UJICACHE_COEFFICIENT_PROFILES,
-    UJICACHE_FORMULA_LINEAR,
-    UJICACHE_FORMULA_TAYLOR2,
-    UJICACHE_FORMULA_TEACACHE,
-    UJICACHE_FORMULAS,
-    UJICACHE_PRESET_CUSTOM,
-    UJICACHE_PRESETS,
-    UJICACHE_PROFILE_DEFAULT,
-    ujicache_coefficients_for_profile,
-    ujicache_expected_shift_for_profile,
-    ujicache_window_for_profile,
+    RESREFINE_CACHE_DEVICE_CUDA,
+    RESREFINE_CACHE_DEVICES,
+    TEA_COEFFICIENT_PROFILES,
+    RESREFINE_FORMULA_LINEAR,
+    RESREFINE_FORMULA_TAYLOR2,
+    RESREFINE_FORMULA_REUSE,
+    RESREFINE_FORMULAS,
+    TEA_PRESET_CUSTOM,
+    TEA_PRESETS,
+    TEA_PROFILE_DEFAULT,
+    tea_coefficients_for_profile,
+    tea_expected_shift_for_profile,
+    tea_window_for_profile,
 )
 from .timing import start_sampling
 
@@ -50,132 +50,132 @@ class Script(scripts.Script):
                 value=_default_option("hareskip_enable", False),
                 elem_id="hareskip-enable",
             )
-            ujicache_preset = gr.Dropdown(
-                label="UjiCache preset",
-                choices=UJICACHE_PRESETS,
-                value=UJICACHE_PRESET_CUSTOM,
-                elem_id="ujicache-preset",
+            tea_preset = gr.Dropdown(
+                label="Tea preset",
+                choices=TEA_PRESETS,
+                value=TEA_PRESET_CUSTOM,
+                elem_id="tea-preset",
             )
-            ujicache_threshold = gr.Slider(
+            tea_threshold = gr.Slider(
                 label="Rel L1 threshold",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.005,
                 value=0.07,
-                elem_id="ujicache-threshold",
+                elem_id="tea-threshold",
             )
-            ujicache_coefficient_profile = gr.Dropdown(
+            tea_coefficient_profile = gr.Dropdown(
                 label="Coefficient profile",
-                choices=UJICACHE_COEFFICIENT_PROFILES,
-                value=UJICACHE_PROFILE_DEFAULT,
-                elem_id="ujicache-coefficient-profile",
+                choices=TEA_COEFFICIENT_PROFILES,
+                value=TEA_PROFILE_DEFAULT,
+                elem_id="tea-coefficient-profile",
             )
             p_anima_x = gr.Markdown(
-                value=_format_p_anima_x(UJICACHE_PROFILE_DEFAULT),
-                elem_id="ujicache-p-anima-x",
+                value=_format_p_anima_x(TEA_PROFILE_DEFAULT),
+                elem_id="tea-p-anima-x",
             )
             gr.HTML(
                 "<style>"
-                "#ujicache-p-anima-x code {"
+                "#tea-p-anima-x code {"
                 " background: none;"
                 " border: none;"
                 " padding: 0;"
                 " color: var(--body-text-color-subdued);"
                 " }"
                 "</style>",
-                elem_id="ujicache-p-anima-x-style",
+                elem_id="tea-p-anima-x-style",
             )
-            ujicache_start_percent = gr.Slider(
+            tea_start_percent = gr.Slider(
                 label="Start progress",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.01,
                 value=0.48,
-                elem_id="ujicache-start-percent",
+                elem_id="tea-start-percent",
             )
-            ujicache_end_percent = gr.Slider(
+            tea_end_percent = gr.Slider(
                 label="End progress",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.01,
                 value=0.76,
-                elem_id="ujicache-end-percent",
+                elem_id="tea-end-percent",
             )
-            ujicache_max_skip_streak = gr.Slider(
+            tea_max_skip_streak = gr.Slider(
                 label="Max skip streak (0 = off)",
                 minimum=0,
                 maximum=64,
                 step=1,
                 value=0,
-                elem_id="ujicache-max-skip-streak",
+                elem_id="tea-max-skip-streak",
             )
-            ujicache_force_full_interval = gr.Slider(
+            tea_force_full_interval = gr.Slider(
                 label="Force full interval (0 = off)",
                 minimum=0,
                 maximum=64,
                 step=1,
                 value=0,
-                elem_id="ujicache-force-full-interval",
+                elem_id="tea-force-full-interval",
             )
-            ujicache_formula = gr.Dropdown(
+            resrefine_formula = gr.Dropdown(
                 label="Prediction formula",
-                choices=UJICACHE_FORMULAS,
-                value=UJICACHE_FORMULA_TEACACHE,
-                elem_id="ujicache-formula",
+                choices=RESREFINE_FORMULAS,
+                value=RESREFINE_FORMULA_REUSE,
+                elem_id="resrefine-formula",
             )
-            ujicache_use_prediction_after_progress = gr.Slider(
+            resrefine_use_prediction_after_progress = gr.Slider(
                 label="Use prediction after progress",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.01,
                 value=0.0,
                 interactive=False,
-                elem_id="ujicache-use-prediction-after-progress",
+                elem_id="resrefine-use-prediction-after-progress",
             )
-            ujicache_apply_prediction_from_skip = gr.Slider(
+            resrefine_apply_prediction_from_skip = gr.Slider(
                 label="Apply prediction from skip #",
                 minimum=1,
                 maximum=3,
                 step=1,
                 value=2,
                 interactive=False,
-                elem_id="ujicache-apply-prediction-from-skip",
+                elem_id="resrefine-apply-prediction-from-skip",
             )
-            ujicache_prediction_strength = gr.Slider(
+            resrefine_prediction_strength = gr.Slider(
                 label="Prediction strength",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.01,
                 value=0.50,
                 interactive=False,
-                elem_id="ujicache-prediction-strength",
+                elem_id="resrefine-prediction-strength",
             )
-            ujicache_taylor2_curve_strength = gr.Slider(
+            resrefine_taylor2_curve_strength = gr.Slider(
                 label="Taylor2 curve strength",
                 minimum=0.0,
                 maximum=1.0,
                 step=0.01,
                 value=0.25,
                 interactive=False,
-                elem_id="ujicache-taylor2-curve-strength",
+                elem_id="resrefine-taylor2-curve-strength",
             )
-            ujicache_slope_ema_smoothing = gr.Slider(
+            resrefine_slope_ema_smoothing = gr.Slider(
                 label="Slope EMA Smoothing",
                 minimum=0.0,
                 maximum=0.99,
                 step=0.01,
                 value=0.0,
                 interactive=False,
-                elem_id="ujicache-slope-ema-smoothing",
+                elem_id="resrefine-slope-ema-smoothing",
             )
-            ujicache_curve_ema_smoothing = gr.Slider(
+            resrefine_curve_ema_smoothing = gr.Slider(
                 label="Curve EMA Smoothing",
                 minimum=0.0,
                 maximum=0.99,
                 step=0.01,
                 value=0.0,
                 interactive=False,
-                elem_id="ujicache-curve-ema-smoothing",
+                elem_id="resrefine-curve-ema-smoothing",
             )
             with gr.Accordion(
                 "Auto Uji mode",
@@ -196,18 +196,18 @@ class Script(scripts.Script):
                 debug_log_enabled = gr.Checkbox(
                     label="Enable debug log mode",
                     value=_default_option("hareskip_debug_log_enable", False),
-                    elem_id="ujicache-debug-enable",
+                    elem_id="hareskip-debug-enable",
                 )
                 mode = gr.Dropdown(
                     label="Debug log",
                     choices=MODES,
                     value=_default_mode_option(),
-                    elem_id="ujicache-mode",
+                    elem_id="hareskip-debug-mode",
                 )
-                dump_ujicache_residual = gr.Checkbox(
-                    label="Dump UjiCache residual",
+                dump_resrefine_residual = gr.Checkbox(
+                    label="Dump ResRefine residual",
                     value=False,
-                    elem_id="ujicache-dump-residual",
+                    elem_id="resrefine-dump-residual",
                 )
                 capture_calibration_pairs = gr.Checkbox(
                     label="Capture calibration pairs",
@@ -217,72 +217,72 @@ class Script(scripts.Script):
                         "(rel_l1, out_rel) pairs plus run conditions to "
                         "calibration_pairs.jsonl in the debug run folder."
                     ),
-                    elem_id="ujicache-capture-calibration-pairs",
+                    elem_id="hareskip-capture-calibration-pairs",
                 )
                 gr.HTML(
                     '<div style="border-top: 3px solid var(--block-border-color, #4b5563); margin: 0.85rem 0 0.7rem;"></div>',
-                    elem_id="ujicache-debug-dump-divider",
+                    elem_id="hareskip-debug-dump-divider",
                 )
                 print_timing_log = gr.Checkbox(
                     label="Print timing log",
                     value=_default_option("hareskip_print_timing_log", True),
-                    elem_id="ujicache-print-timing-log",
+                    elem_id="hareskip-print-timing-log",
                 )
                 verbose_diagnose_log = gr.Checkbox(
                     label="Verbose diagnose log",
                     value=_default_option("hareskip_verbose_diagnose_log", False),
-                    elem_id="ujicache-verbose-diagnose-log",
+                    elem_id="hareskip-verbose-diagnose-log",
                 )
-            ujicache_cache_device = gr.Radio(
+            resrefine_cache_device = gr.Radio(
                 label="Cache device",
-                choices=UJICACHE_CACHE_DEVICES,
-                value=UJICACHE_CACHE_DEVICE_CUDA,
-                elem_id="ujicache-cache-device",
+                choices=RESREFINE_CACHE_DEVICES,
+                value=RESREFINE_CACHE_DEVICE_CUDA,
+                elem_id="resrefine-cache-device",
             )
-            ujicache_dry_run = gr.Checkbox(
+            hareskip_dry_run = gr.Checkbox(
                 label="Dry run",
                 value=False,
-                elem_id="ujicache-dry-run",
+                elem_id="hareskip-dry-run",
             )
-            ujicache_verbose_trace = gr.Checkbox(
-                label="Verbose UjiCache trace",
+            hareskip_verbose_trace = gr.Checkbox(
+                label="Verbose HareSkip trace",
                 value=False,
-                elem_id="ujicache-verbose-trace",
+                elem_id="hareskip-verbose-trace",
             )
 
-            ujicache_formula.change(
-                fn=_ujicache_prediction_control_updates,
-                inputs=[ujicache_formula, ujicache_slope_ema_smoothing],
+            resrefine_formula.change(
+                fn=_hareskip_prediction_control_updates,
+                inputs=[resrefine_formula, resrefine_slope_ema_smoothing],
                 outputs=[
-                    ujicache_use_prediction_after_progress,
-                    ujicache_apply_prediction_from_skip,
-                    ujicache_prediction_strength,
-                    ujicache_taylor2_curve_strength,
-                    ujicache_slope_ema_smoothing,
-                    ujicache_curve_ema_smoothing,
+                    resrefine_use_prediction_after_progress,
+                    resrefine_apply_prediction_from_skip,
+                    resrefine_prediction_strength,
+                    resrefine_taylor2_curve_strength,
+                    resrefine_slope_ema_smoothing,
+                    resrefine_curve_ema_smoothing,
                 ],
             )
-            ujicache_slope_ema_smoothing.change(
-                fn=_ujicache_prediction_control_updates,
-                inputs=[ujicache_formula, ujicache_slope_ema_smoothing],
+            resrefine_slope_ema_smoothing.change(
+                fn=_hareskip_prediction_control_updates,
+                inputs=[resrefine_formula, resrefine_slope_ema_smoothing],
                 outputs=[
-                    ujicache_use_prediction_after_progress,
-                    ujicache_apply_prediction_from_skip,
-                    ujicache_prediction_strength,
-                    ujicache_taylor2_curve_strength,
-                    ujicache_slope_ema_smoothing,
-                    ujicache_curve_ema_smoothing,
+                    resrefine_use_prediction_after_progress,
+                    resrefine_apply_prediction_from_skip,
+                    resrefine_prediction_strength,
+                    resrefine_taylor2_curve_strength,
+                    resrefine_slope_ema_smoothing,
+                    resrefine_curve_ema_smoothing,
                 ],
             )
             enabled.change(
-                fn=_ujicache_enable_updates,
+                fn=_hareskip_enable_updates,
                 inputs=[enabled],
                 outputs=[auto_ujicache_enabled],
             )
-            ujicache_coefficient_profile.change(
-                fn=_ujicache_profile_change_updates,
-                inputs=[ujicache_coefficient_profile],
-                outputs=[ujicache_start_percent, ujicache_end_percent, p_anima_x],
+            tea_coefficient_profile.change(
+                fn=_hareskip_profile_change_updates,
+                inputs=[tea_coefficient_profile],
+                outputs=[tea_start_percent, tea_end_percent, p_anima_x],
             )
 
         return [
@@ -291,24 +291,24 @@ class Script(scripts.Script):
             mode,
             print_timing_log,
             verbose_diagnose_log,
-            dump_ujicache_residual,
-            ujicache_preset,
-            ujicache_threshold,
-            ujicache_start_percent,
-            ujicache_end_percent,
-            ujicache_formula,
-            ujicache_use_prediction_after_progress,
-            ujicache_apply_prediction_from_skip,
-            ujicache_prediction_strength,
-            ujicache_taylor2_curve_strength,
-            ujicache_slope_ema_smoothing,
-            ujicache_curve_ema_smoothing,
-            ujicache_cache_device,
-            ujicache_coefficient_profile,
-            ujicache_max_skip_streak,
-            ujicache_force_full_interval,
-            ujicache_dry_run,
-            ujicache_verbose_trace,
+            dump_resrefine_residual,
+            tea_preset,
+            tea_threshold,
+            tea_start_percent,
+            tea_end_percent,
+            resrefine_formula,
+            resrefine_use_prediction_after_progress,
+            resrefine_apply_prediction_from_skip,
+            resrefine_prediction_strength,
+            resrefine_taylor2_curve_strength,
+            resrefine_slope_ema_smoothing,
+            resrefine_curve_ema_smoothing,
+            resrefine_cache_device,
+            tea_coefficient_profile,
+            tea_max_skip_streak,
+            tea_force_full_interval,
+            hareskip_dry_run,
+            hareskip_verbose_trace,
             auto_ujicache_enabled,
             auto_ujicache_csv,
             capture_calibration_pairs,
@@ -482,9 +482,9 @@ def _apply_auto_ujicache_row_if_needed(p) -> None:
             "auto_uji_row_start "
             f"index={row_index + 1}/{len(rows)} name={row.name} "
             f"repeat={repeat_index}/{original_n_iter} "
-            f"threshold={STATE.ujicache_threshold:.4f} "
-            f"formula={STATE.ujicache_formula} "
-            f"prediction_strength={STATE.ujicache_prediction_strength:.2f} "
+            f"threshold={STATE.tea_threshold:.4f} "
+            f"formula={STATE.resrefine_formula} "
+            f"prediction_strength={STATE.resrefine_prediction_strength:.2f} "
             f"batch_size={_positive_int(getattr(p, 'batch_size', 1), 1)} "
             f"seeds={_row_seed_label(p, row_index)}"
         )
@@ -662,25 +662,25 @@ def _apply_infotext_metadata(p) -> None:
             setattr(p, "extra_generation_params", params)
         _clear_legacy_ujicache_metadata(params)
         params["Uji enabled"] = True
-        params["Uji formula"] = STATE.ujicache_formula
-        params["Uji threshold"] = f"{STATE.ujicache_threshold:.4f}"
+        params["Uji formula"] = STATE.resrefine_formula
+        params["Uji threshold"] = f"{STATE.tea_threshold:.4f}"
         params["Uji progress"] = (
-            f"{STATE.ujicache_start_percent:.2f}..{STATE.ujicache_end_percent:.2f}"
+            f"{STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f}"
         )
         params["Uji use_prediction_after_progress"] = (
-            f"{STATE.ujicache_use_prediction_after_progress:.2f}"
+            f"{STATE.resrefine_use_prediction_after_progress:.2f}"
         )
-        params["Uji apply_prediction_from_skip"] = STATE.ujicache_apply_prediction_from_skip
-        params["Uji prediction_strength"] = f"{STATE.ujicache_prediction_strength:.2f}"
+        params["Uji apply_prediction_from_skip"] = STATE.resrefine_apply_prediction_from_skip
+        params["Uji prediction_strength"] = f"{STATE.resrefine_prediction_strength:.2f}"
         params["Uji taylor2_curve_strength"] = (
-            f"{STATE.ujicache_taylor2_curve_strength:.2f}"
+            f"{STATE.resrefine_taylor2_curve_strength:.2f}"
         )
-        params["Uji slope_ema_smoothing"] = f"{STATE.ujicache_slope_ema_smoothing:.2f}"
-        params["Uji curve_ema_smoothing"] = f"{STATE.ujicache_curve_ema_smoothing:.2f}"
-        params["Uji modulated_source"] = STATE.ujicache_modulated_source
-        params["Uji coefficient_profile"] = STATE.ujicache_coefficient_profile
-        params["Uji max_skip_streak"] = STATE.ujicache_max_skip_streak
-        params["Uji force_full_interval"] = STATE.ujicache_force_full_interval
+        params["Uji slope_ema_smoothing"] = f"{STATE.resrefine_slope_ema_smoothing:.2f}"
+        params["Uji curve_ema_smoothing"] = f"{STATE.resrefine_curve_ema_smoothing:.2f}"
+        params["Uji modulated_source"] = STATE.tea_modulated_source
+        params["Uji coefficient_profile"] = STATE.tea_coefficient_profile
+        params["Uji max_skip_streak"] = STATE.tea_max_skip_streak
+        params["Uji force_full_interval"] = STATE.tea_force_full_interval
         shift_value = _model_sampling_shift()
         if shift_value is not None:
             params["Uji shift"] = f"{shift_value:.2f}"
@@ -725,27 +725,27 @@ def _configure_generation_patches() -> None:
 
     if (
         STATE.tensor_dump_active()
-        and STATE.dump_ujicache_residual
+        and STATE.dump_resrefine_residual
         and not STATE.hareskip_enabled
-        and "ujicache_residual_requires_ujicache" not in STATE.tensor_dump_warned_reasons
+        and "resrefine_residual_requires_hareskip" not in STATE.tensor_dump_warned_reasons
     ):
-        STATE.tensor_dump_warned_reasons.add("ujicache_residual_requires_ujicache")
+        STATE.tensor_dump_warned_reasons.add("resrefine_residual_requires_hareskip")
         warning("tensor_dump_hareskip_residual_inactive reason=hareskip_disabled")
 
     if (
         STATE.debug_log_enabled
         and STATE.capture_calibration_pairs
         and not STATE.hareskip_enabled
-        and "calibration_capture_requires_ujicache" not in STATE.calibration_capture_warned_reasons
+        and "calibration_capture_requires_hareskip" not in STATE.calibration_capture_warned_reasons
     ):
-        STATE.calibration_capture_warned_reasons.add("calibration_capture_requires_ujicache")
+        STATE.calibration_capture_warned_reasons.add("calibration_capture_requires_hareskip")
         warning("calibration_capture_inactive reason=hareskip_disabled")
 
 
 def _tensor_dump_will_save() -> bool:
     return bool(
         STATE.tensor_dump_active()
-        and (STATE.dump_ujicache_residual or STATE.capture_calibration_pairs)
+        and (STATE.dump_resrefine_residual or STATE.capture_calibration_pairs)
         and STATE.hareskip_enabled
     )
 
@@ -782,7 +782,7 @@ def _check_profile_shift_match() -> None:
     """
     if not STATE.hareskip_enabled:
         return
-    expected = ujicache_expected_shift_for_profile(STATE.ujicache_coefficient_profile)
+    expected = tea_expected_shift_for_profile(STATE.tea_coefficient_profile)
     if expected is None:
         return
     effective = _model_sampling_shift()
@@ -790,13 +790,13 @@ def _check_profile_shift_match() -> None:
         return
     if round(effective) == expected:
         return
-    key = f"{STATE.ujicache_coefficient_profile}@{effective:.3f}"
-    if key in STATE.ujicache_shift_warned_keys:
+    key = f"{STATE.tea_coefficient_profile}@{effective:.3f}"
+    if key in STATE.tea_shift_warned_keys:
         return
-    STATE.ujicache_shift_warned_keys.add(key)
+    STATE.tea_shift_warned_keys.add(key)
     warning(
         "hareskip_shift_mismatch "
-        f"profile={STATE.ujicache_coefficient_profile} "
+        f"profile={STATE.tea_coefficient_profile} "
         f"expected_shift={expected} effective_shift={effective:.3f}; "
         "coefficients are off their fitted domain — match the model Shift to the preset"
     )
@@ -836,7 +836,7 @@ def _format_p_anima_x(profile: str) -> str:
     produce very small coefficients that would collapse to 0 if rounded. Signs
     are operator-ized (A·x⁴ − B·x³ + …) for readability.
     """
-    coefficients = ujicache_coefficients_for_profile(profile)
+    coefficients = tea_coefficients_for_profile(profile)
     if not coefficients:
         return "`p_Anima(x) = (no coefficients)`"
     degree = len(coefficients) - 1
@@ -855,16 +855,16 @@ def _format_p_anima_x(profile: str) -> str:
     return "`p_Anima(x) = " + " ".join(terms) + "`"
 
 
-def _ujicache_profile_change_updates(profile: str):
+def _hareskip_profile_change_updates(profile: str):
     """React to a Coefficient profile change: loosely move the Start/End sliders
     to the profile's recommended window and refresh p_Anima(x).
 
-    Window semantics (ujicache_window_for_profile):
+    Window semantics (tea_window_for_profile):
       (start, end) -> move the sliders there (calibrated presets and daraskme).
       None         -> leave the sliders untouched (Identity estimate).
     The user can still move the sliders by hand afterwards (loose coupling).
     """
-    window = ujicache_window_for_profile(profile)
+    window = tea_window_for_profile(profile)
     if window is None:
         start_update = gr.update()
         end_update = gr.update()
@@ -874,9 +874,9 @@ def _ujicache_profile_change_updates(profile: str):
     return start_update, end_update, gr.update(value=_format_p_anima_x(profile))
 
 
-def _ujicache_prediction_control_updates(formula: str, slope_ema_smoothing: float):
-    uses_prediction = formula in (UJICACHE_FORMULA_LINEAR, UJICACHE_FORMULA_TAYLOR2)
-    uses_taylor = formula == UJICACHE_FORMULA_TAYLOR2
+def _hareskip_prediction_control_updates(formula: str, slope_ema_smoothing: float):
+    uses_prediction = formula in (RESREFINE_FORMULA_LINEAR, RESREFINE_FORMULA_TAYLOR2)
+    uses_taylor = formula == RESREFINE_FORMULA_TAYLOR2
     try:
         slope = float(slope_ema_smoothing)
     except Exception:
@@ -891,7 +891,7 @@ def _ujicache_prediction_control_updates(formula: str, slope_ema_smoothing: floa
     )
 
 
-def _ujicache_enable_updates(enabled: bool):
+def _hareskip_enable_updates(enabled: bool):
     if enabled:
         return gr.update()
     return False

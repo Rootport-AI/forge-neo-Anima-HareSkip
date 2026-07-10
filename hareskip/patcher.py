@@ -6,15 +6,14 @@ from typing import Any
 from .logging import info, warning
 from .state import (
     STATE,
-    UJICACHE_CACHE_DEVICE_CPU,
-    UJICACHE_FORMULA_LINEAR,
-    UJICACHE_FORMULA_TAYLOR2,
-    UJICACHE_FORMULA_TEACACHE,
-    UJICACHE_SOURCE_FIRST_BLOCK_SHIFT,
-    ujicache_coefficients_for_profile,
+    RESREFINE_CACHE_DEVICE_CPU,
+    TEA_SOURCE_FIRST_BLOCK_SHIFT,
+    tea_coefficients_for_profile,
 )
-
-UJICACHE_MAX_NORM_RATIO = 3.0
+from .resrefine import (
+    _resrefine_record_residual,
+    _resrefine_residual_for_slot,
+)
 
 
 @dataclass
@@ -82,7 +81,7 @@ def _apply_hareskip_patch() -> PatchResult:
             return original_forward(self, x, timesteps, context, *args, **kwargs)
         try:
             fps, padding_mask, body_kwargs = _parse_forward_args(target_name, args, kwargs)
-            return _ujicache_forward_body(
+            return _hareskip_forward_body(
                 self,
                 x,
                 timesteps,
@@ -110,19 +109,19 @@ def _apply_hareskip_patch() -> PatchResult:
 
     STATE.patches[kind] = {"restore": restore}
     info(
-        "applied experimental patch kind=ujicache "
+        "applied experimental patch kind=hareskip "
         f"target=backend.nn.anima.Anima.{target_name} "
-        f"formula={STATE.ujicache_formula} "
-        f"threshold={STATE.ujicache_threshold:.4f} "
-        f"progress={STATE.ujicache_start_percent:.2f}..{STATE.ujicache_end_percent:.2f} "
-        f"use_prediction_after={STATE.ujicache_use_prediction_after_progress:.2f} "
-        f"apply_from_skip={STATE.ujicache_apply_prediction_from_skip} "
-        f"prediction_strength={STATE.ujicache_prediction_strength:.2f} "
-        f"taylor2_curve_strength={STATE.ujicache_taylor2_curve_strength:.2f} "
-        f"slope_ema_smoothing={STATE.ujicache_slope_ema_smoothing:.2f} "
-        f"curve_ema_smoothing={STATE.ujicache_curve_ema_smoothing:.2f} "
-        f"cache_device={STATE.ujicache_cache_device} "
-        f"source={STATE.ujicache_modulated_source}"
+        f"formula={STATE.resrefine_formula} "
+        f"threshold={STATE.tea_threshold:.4f} "
+        f"progress={STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f} "
+        f"use_prediction_after={STATE.resrefine_use_prediction_after_progress:.2f} "
+        f"apply_from_skip={STATE.resrefine_apply_prediction_from_skip} "
+        f"prediction_strength={STATE.resrefine_prediction_strength:.2f} "
+        f"taylor2_curve_strength={STATE.resrefine_taylor2_curve_strength:.2f} "
+        f"slope_ema_smoothing={STATE.resrefine_slope_ema_smoothing:.2f} "
+        f"curve_ema_smoothing={STATE.resrefine_curve_ema_smoothing:.2f} "
+        f"cache_device={STATE.resrefine_cache_device} "
+        f"source={STATE.tea_modulated_source}"
     )
     return PatchResult(True, kind, "applied")
 
@@ -141,12 +140,12 @@ def _parse_forward_args(
         if len(args) > 1:
             padding_mask = args[1]
         if len(args) > 2:
-            raise RuntimeError("Anima._forward extra positional arguments are unsupported by UjiCache")
+            raise RuntimeError("Anima._forward extra positional arguments are unsupported by HareSkip")
     else:
         if len(args) > 0:
             padding_mask = args[0]
         if len(args) > 1:
-            raise RuntimeError("Anima.forward extra positional arguments are unsupported by UjiCache")
+            raise RuntimeError("Anima.forward extra positional arguments are unsupported by HareSkip")
     return fps, padding_mask, body_kwargs
 
 
@@ -154,7 +153,7 @@ def _should_hareskip_patch() -> bool:
     return STATE.active() and STATE.hareskip_enabled
 
 
-def _ujicache_forward_body(
+def _hareskip_forward_body(
     model: Any,
     x: Any,
     timesteps: Any,
@@ -201,8 +200,8 @@ def _ujicache_forward_body(
     )
     t_embedding_B_T_D = model.t_embedding_norm(t_embedding_B_T_D)
 
-    cache_device = _ujicache_cache_device(x_B_T_H_W_D)
-    modulated_inp = _ujicache_modulated_input(
+    cache_device = _resrefine_cache_device(x_B_T_H_W_D)
+    modulated_inp = _tea_modulated_input(
         model,
         t_embedding_B_T_D,
         adaln_lora_B_T_3D,
@@ -217,14 +216,14 @@ def _ujicache_forward_body(
     slot_should_calc: dict[Any, bool] = {}
     for slot_index, key in enumerate(cond_or_uncond):
         key = int(key)
-        item = _ujicache_slot(cache, key)
+        item = _hareskip_slot(cache, key)
         modulated_slice = modulated_inp[
             slot_index * batch_per_slot : (slot_index + 1) * batch_per_slot
         ]
-        rels[key] = _ujicache_update_slot(item, modulated_slice)
+        rels[key] = _tea_update_slot(item, modulated_slice)
         slot_should_calc[key] = bool(item["should_calc"])
 
-    force_full_reason = _ujicache_force_full_reason(
+    force_full_reason = _tea_force_full_reason(
         cache,
         step_index,
         progress,
@@ -234,8 +233,8 @@ def _ujicache_forward_body(
     if STATE.calibration_capture_active() and not should_calc:
         should_calc = True
         force_full_reason = "calibration_capture"
-    if STATE.ujicache_dry_run and not should_calc:
-        STATE.ujicache_dry_run_predictions += 1
+    if STATE.hareskip_dry_run and not should_calc:
+        STATE.hareskip_dry_run_predictions += 1
         should_calc = True
         force_full_reason = "dry_run"
 
@@ -259,7 +258,7 @@ def _ujicache_forward_body(
                 **block_kwargs,
             )
         residual = x_B_T_H_W_D.to(cache_device) - ori_x
-        _dump_ujicache_residual(
+        _dump_resrefine_residual(
             residual,
             cond_or_uncond,
             batch_per_slot,
@@ -268,7 +267,7 @@ def _ujicache_forward_body(
             cache_device,
         )
         for slot_index, key in enumerate(cond_or_uncond):
-            item = _ujicache_slot(cache, int(key))
+            item = _hareskip_slot(cache, int(key))
             start = slot_index * batch_per_slot
             end = (slot_index + 1) * batch_per_slot
             residual_slice = residual[start:end]
@@ -283,7 +282,7 @@ def _ujicache_forward_body(
                 end,
             )
             item["previous_residual"] = residual_slice
-            _ujicache_record_residual(item, step_index, residual_slice)
+            _resrefine_record_residual(item, step_index, residual_slice)
             item["accumulated_rel_l1_distance"] = 0.0
             item["should_calc"] = True
         cache["skip_streak"] = 0
@@ -307,7 +306,7 @@ def _ujicache_forward_body(
         )
     else:
         slot_actions, slot_reasons, slot_notes, slot_ema_info, late_phase, skip_streak = (
-            _ujicache_apply_residual(
+            _resrefine_apply_residual(
                 x_B_T_H_W_D,
                 cache,
                 cond_or_uncond,
@@ -321,7 +320,7 @@ def _ujicache_forward_body(
         if not STATE.hareskip_skipped_steps or STATE.hareskip_skipped_steps[-1] != step_index:
             STATE.hareskip_skipped_steps.append(int(step_index))
         if any(action == "prediction" for action in slot_actions.values()):
-            STATE.ujicache_prediction_used += 1
+            STATE.resrefine_prediction_used += 1
             decision = "prediction"
         else:
             STATE.hareskip_fallback_used += 1
@@ -399,21 +398,21 @@ def _pad_to_patch_size_5d(x: Any, patch_size: tuple[int, int, int]):
     return functional.pad(x, pad, mode=padding_mode)
 
 
-def _ujicache_cache_device(x: Any):
+def _resrefine_cache_device(x: Any):
     import torch
 
-    if STATE.ujicache_cache_device == UJICACHE_CACHE_DEVICE_CPU:
+    if STATE.resrefine_cache_device == RESREFINE_CACHE_DEVICE_CPU:
         return torch.device("cpu")
     return getattr(x, "device", torch.device("cpu"))
 
 
-def _ujicache_modulated_input(model: Any, t_embedding: Any, adaln_lora: Any, cache_device: Any):
+def _tea_modulated_input(model: Any, t_embedding: Any, adaln_lora: Any, cache_device: Any):
     return _cache_modulated_input(
         model,
         t_embedding,
         adaln_lora,
         cache_device,
-        STATE.ujicache_modulated_source,
+        STATE.tea_modulated_source,
     )
 
 
@@ -424,7 +423,7 @@ def _cache_modulated_input(
     cache_device: Any,
     source: str,
 ):
-    if source != UJICACHE_SOURCE_FIRST_BLOCK_SHIFT:
+    if source != TEA_SOURCE_FIRST_BLOCK_SHIFT:
         return t_embedding.to(cache_device)
     blocks = getattr(model, "blocks", None)
     if not blocks:
@@ -451,7 +450,7 @@ def _hareskip_state_for_model(model: Any) -> dict[str, Any]:
     return cache
 
 
-def _ujicache_slot(cache: dict[str, Any], key: int) -> dict[str, Any]:
+def _hareskip_slot(cache: dict[str, Any], key: int) -> dict[str, Any]:
     slots = cache.setdefault("slots", {})
     if key not in slots:
         slots[key] = {
@@ -488,17 +487,17 @@ def _batch_per_slot(x: Any, cond_or_uncond: Any) -> int:
     return total // slots
 
 
-def _ujicache_update_slot(slot: dict[str, Any], modulated_slice: Any) -> float | None:
-    return _cache_update_slot(
+def _tea_update_slot(slot: dict[str, Any], modulated_slice: Any) -> float | None:
+    return _tea_cache_update_slot(
         slot,
         modulated_slice,
-        STATE.ujicache_threshold,
-        _ujicache_coefficients(),
-        "UjiCache",
+        STATE.tea_threshold,
+        _tea_coefficients(),
+        "Tea",
     )
 
 
-def _cache_update_slot(
+def _tea_cache_update_slot(
     slot: dict[str, Any],
     modulated_slice: Any,
     threshold: float,
@@ -544,8 +543,8 @@ def _cache_poly1d(value: float, coefficients: list[float]) -> float:
     return result
 
 
-def _ujicache_coefficients() -> list[float]:
-    return ujicache_coefficients_for_profile(STATE.ujicache_coefficient_profile)
+def _tea_coefficients() -> list[float]:
+    return tea_coefficients_for_profile(STATE.tea_coefficient_profile)
 
 
 def _progress(step_index: int) -> float:
@@ -555,7 +554,7 @@ def _progress(step_index: int) -> float:
     return max(0.0, min(1.0, step_index / float(steps - 1)))
 
 
-def _ujicache_force_full_reason(
+def _tea_force_full_reason(
     cache: dict[str, Any],
     step_index: int,
     progress: float,
@@ -564,20 +563,20 @@ def _ujicache_force_full_reason(
     if STATE.hareskip_model_calls == 1:
         return "first_call"
     for key in cond_or_uncond:
-        if _ujicache_slot(cache, int(key)).get("previous_residual") is None:
+        if _hareskip_slot(cache, int(key)).get("previous_residual") is None:
             return "missing_residual"
-    if progress < STATE.ujicache_start_percent or progress > STATE.ujicache_end_percent:
+    if progress < STATE.tea_start_percent or progress > STATE.tea_end_percent:
         return "outside_progress"
-    interval = STATE.ujicache_force_full_interval
+    interval = STATE.tea_force_full_interval
     if interval > 0 and step_index > 0 and step_index % interval == 0:
         return "force_full_interval"
-    max_skip_streak = STATE.ujicache_max_skip_streak
+    max_skip_streak = STATE.tea_max_skip_streak
     if max_skip_streak > 0 and int(cache.get("skip_streak", 0)) >= max_skip_streak:
         return "max_skip_streak"
     return None
 
 
-def _ujicache_apply_residual(
+def _resrefine_apply_residual(
     x: Any,
     cache: dict[str, Any],
     cond_or_uncond: Any,
@@ -593,7 +592,7 @@ def _ujicache_apply_residual(
     int,
 ]:
     skip_streak = int(cache.get("skip_streak", 0)) + 1
-    late_phase = progress > STATE.ujicache_use_prediction_after_progress
+    late_phase = progress > STATE.resrefine_use_prediction_after_progress
     slot_actions: dict[int, str] = {}
     slot_reasons: dict[int, str | None] = {}
     slot_notes: dict[int, str | None] = {}
@@ -603,8 +602,8 @@ def _ujicache_apply_residual(
         start = slot_index * batch_per_slot
         end = (slot_index + 1) * batch_per_slot
         target_slice = x[start:end]
-        residual, action, reason, note, ema_info = _ujicache_residual_for_slot(
-            _ujicache_slot(cache, key),
+        residual, action, reason, note, ema_info = _resrefine_residual_for_slot(
+            _hareskip_slot(cache, key),
             target_slice,
             step_index,
             skip_streak,
@@ -616,273 +615,6 @@ def _ujicache_apply_residual(
         slot_notes[key] = note
         slot_ema_info[key] = ema_info
     return slot_actions, slot_reasons, slot_notes, slot_ema_info, late_phase, skip_streak
-
-
-def _ujicache_residual_for_slot(
-    slot: dict[str, Any],
-    target_slice: Any,
-    step_index: int,
-    skip_streak: int,
-    late_phase: bool,
-) -> tuple[Any, str, str | None, str | None, dict[str, Any]]:
-    ema_info = _ujicache_ema_info(slot, step_index)
-    previous = slot.get("previous_residual")
-    if previous is None:
-        raise RuntimeError("missing previous_residual")
-    if getattr(previous, "shape", None) != getattr(target_slice, "shape", None):
-        raise RuntimeError(
-            f"residual shape mismatch residual={_shape(previous)} target={_shape(target_slice)}"
-        )
-
-    formula = STATE.ujicache_formula
-    if formula == UJICACHE_FORMULA_TEACACHE:
-        return previous.to(target_slice.device), "fallback", "formula", None, ema_info
-
-    prediction_allowed = late_phase or skip_streak >= STATE.ujicache_apply_prediction_from_skip
-    if not prediction_allowed:
-        return previous.to(target_slice.device), "fallback", "streak", None, ema_info
-
-    try:
-        prediction_note = None
-        if formula == UJICACHE_FORMULA_LINEAR:
-            if STATE.ujicache_slope_ema_smoothing <= 0.0:
-                prediction = _ujicache_predict_linear(slot, step_index, previous)
-            else:
-                prediction, prediction_note = _ujicache_predict_linear_ema(slot, step_index, previous)
-        elif formula == UJICACHE_FORMULA_TAYLOR2:
-            if STATE.ujicache_slope_ema_smoothing <= 0.0:
-                prediction = _ujicache_predict_taylor2(slot, step_index, previous)
-            else:
-                prediction, prediction_note = _ujicache_predict_taylor2_ema(slot, step_index, previous)
-        else:
-            return previous.to(target_slice.device), "fallback", "formula", None, ema_info
-        prediction = _ujicache_validate_prediction(prediction, previous, target_slice)
-        return prediction.to(target_slice.device), "prediction", None, prediction_note, ema_info
-    except _UjiCachePredictionFallback as exc:
-        return previous.to(target_slice.device), "fallback", exc.reason, None, ema_info
-    except Exception:
-        return previous.to(target_slice.device), "fallback", "prediction_error", None, ema_info
-
-
-class _UjiCachePredictionFallback(Exception):
-    def __init__(self, reason: str):
-        super().__init__(reason)
-        self.reason = reason
-
-
-def _ujicache_record_residual(slot: dict[str, Any], step_index: int, residual: Any) -> None:
-    _ujicache_update_ema(slot, step_index, residual)
-    history = slot.setdefault("residual_history", [])
-    history.append(
-        {
-            "step_index": int(step_index),
-            "residual": residual.detach(),
-        }
-    )
-    if len(history) > 5:
-        del history[:-5]
-
-
-def _ujicache_update_ema(slot: dict[str, Any], step_index: int, residual: Any) -> None:
-    history = slot.get("residual_history") or []
-    if not history:
-        return
-    previous_item = history[-1]
-    try:
-        t_prev = float(previous_item["step_index"])
-        t_now = float(step_index)
-        dt = t_now - t_prev
-        if dt <= 0.0:
-            return
-        previous_residual = previous_item["residual"]
-        if getattr(previous_residual, "shape", None) != getattr(residual, "shape", None):
-            return
-        v_obs = (residual.detach().float() - previous_residual.float()) / dt
-        v_time = (t_prev + t_now) / 2.0
-        previous_velocity = slot.get("previous_velocity")
-        previous_velocity_time = slot.get("previous_velocity_time")
-        if (
-            previous_velocity is not None
-            and previous_velocity_time is not None
-            and getattr(previous_velocity, "shape", None) == getattr(v_obs, "shape", None)
-        ):
-            dt_v = v_time - float(previous_velocity_time)
-            if dt_v > 0.0:
-                a_obs = (v_obs - previous_velocity.to(v_obs.device).float()) / dt_v
-                acceleration_ema = slot.get("acceleration_ema")
-                beta_a = STATE.ujicache_curve_ema_smoothing
-                if acceleration_ema is None or getattr(acceleration_ema, "shape", None) != getattr(a_obs, "shape", None):
-                    slot["acceleration_ema"] = a_obs.detach()
-                else:
-                    slot["acceleration_ema"] = (
-                        beta_a * acceleration_ema.to(a_obs.device).float()
-                        + (1.0 - beta_a) * a_obs
-                    ).detach()
-
-        velocity_ema = slot.get("velocity_ema")
-        beta_v = STATE.ujicache_slope_ema_smoothing
-        if velocity_ema is None or getattr(velocity_ema, "shape", None) != getattr(v_obs, "shape", None):
-            slot["velocity_ema"] = v_obs.detach()
-        else:
-            slot["velocity_ema"] = (
-                beta_v * velocity_ema.to(v_obs.device).float()
-                + (1.0 - beta_v) * v_obs
-            ).detach()
-        slot["previous_velocity"] = v_obs.detach()
-        slot["previous_velocity_time"] = v_time
-    except Exception:
-        return
-
-
-def _ujicache_predict_linear(slot: dict[str, Any], step_index: int, previous: Any):
-    history = _ujicache_residual_history(slot, 2)
-    raw_prediction = _ujicache_lagrange_prediction(history[-2:], step_index)
-    previous_f32 = previous.float()
-    return previous_f32 + STATE.ujicache_prediction_strength * (raw_prediction - previous_f32)
-
-
-def _ujicache_predict_taylor2(slot: dict[str, Any], step_index: int, previous: Any):
-    history = _ujicache_residual_history(slot, 3)
-    linear_prediction = _ujicache_lagrange_prediction(history[-2:], step_index)
-    quadratic_prediction = _ujicache_lagrange_prediction(history[-3:], step_index)
-    curve = STATE.ujicache_taylor2_curve_strength
-    raw_prediction = (1.0 - curve) * linear_prediction + curve * quadratic_prediction
-    previous_f32 = previous.float()
-    return previous_f32 + STATE.ujicache_prediction_strength * (raw_prediction - previous_f32)
-
-
-def _ujicache_predict_linear_ema(
-    slot: dict[str, Any],
-    step_index: int,
-    previous: Any,
-) -> tuple[Any, str | None]:
-    dt_pred, velocity_ema = _ujicache_ema_velocity(slot, step_index, previous)
-    previous_f32 = previous.float()
-    raw_prediction = previous_f32 + dt_pred * velocity_ema
-    return (
-        previous_f32
-        + STATE.ujicache_prediction_strength * (raw_prediction - previous_f32),
-        None,
-    )
-
-
-def _ujicache_predict_taylor2_ema(
-    slot: dict[str, Any],
-    step_index: int,
-    previous: Any,
-) -> tuple[Any, str | None]:
-    dt_pred, velocity_ema = _ujicache_ema_velocity(slot, step_index, previous)
-    previous_f32 = previous.float()
-    linear_prediction = previous_f32 + dt_pred * velocity_ema
-    acceleration_ema = slot.get("acceleration_ema")
-    if acceleration_ema is None:
-        raw_prediction = linear_prediction
-        prediction_note = "taylor2_ema_without_acceleration"
-    else:
-        if getattr(acceleration_ema, "shape", None) != getattr(previous, "shape", None):
-            raise _UjiCachePredictionFallback("shape_mismatch")
-        curve_term = 0.5 * (dt_pred ** 2) * acceleration_ema.to(previous.device).float()
-        raw_prediction = (
-            linear_prediction
-            + STATE.ujicache_taylor2_curve_strength * curve_term
-        )
-        prediction_note = None
-    return (
-        previous_f32
-        + STATE.ujicache_prediction_strength * (raw_prediction - previous_f32),
-        prediction_note,
-    )
-
-
-def _ujicache_ema_velocity(
-    slot: dict[str, Any],
-    step_index: int,
-    previous: Any,
-) -> tuple[float, Any]:
-    history = slot.get("residual_history") or []
-    if not history:
-        raise _UjiCachePredictionFallback("insufficient_history")
-    latest = history[-1]
-    velocity_ema = slot.get("velocity_ema")
-    if velocity_ema is None:
-        raise _UjiCachePredictionFallback("insufficient_ema_velocity")
-    if getattr(velocity_ema, "shape", None) != getattr(previous, "shape", None):
-        raise _UjiCachePredictionFallback("shape_mismatch")
-    dt_pred = float(step_index) - float(latest["step_index"])
-    return dt_pred, velocity_ema.to(previous.device).float()
-
-
-def _ujicache_ema_info(slot: dict[str, Any], step_index: int) -> dict[str, Any]:
-    history = slot.get("residual_history") or []
-    dt_pred = None
-    if history:
-        try:
-            dt_pred = float(step_index) - float(history[-1]["step_index"])
-        except Exception:
-            dt_pred = None
-    return {
-        "velocity_ready": slot.get("velocity_ema") is not None,
-        "acceleration_ready": slot.get("acceleration_ema") is not None,
-        "dt_pred": dt_pred,
-    }
-
-
-def _ujicache_residual_history(slot: dict[str, Any], count: int) -> list[dict[str, Any]]:
-    history = slot.get("residual_history") or []
-    if len(history) < count:
-        raise _UjiCachePredictionFallback("insufficient_history")
-    recent = history[-count:]
-    reference_shape = getattr(recent[-1].get("residual"), "shape", None)
-    for item in recent:
-        if getattr(item.get("residual"), "shape", None) != reference_shape:
-            raise _UjiCachePredictionFallback("shape_mismatch")
-    return recent
-
-
-def _ujicache_lagrange_prediction(history: list[dict[str, Any]], step_index: int):
-    if not history:
-        raise _UjiCachePredictionFallback("insufficient_history")
-    times = [float(item["step_index"]) for item in history]
-    target = float(step_index)
-    result = None
-    for i, item in enumerate(history):
-        weight = 1.0
-        for j, other_time in enumerate(times):
-            if i == j:
-                continue
-            denom = times[i] - other_time
-            if abs(denom) < 1e-6:
-                raise _UjiCachePredictionFallback("duplicate_history_step")
-            weight *= (target - other_time) / denom
-        residual = item["residual"].float()
-        weighted = residual * weight
-        result = weighted if result is None else result + weighted
-    if result is None:
-        raise _UjiCachePredictionFallback("insufficient_history")
-    return result
-
-
-def _ujicache_validate_prediction(prediction: Any, previous: Any, target_slice: Any):
-    import math
-    import torch
-
-    if getattr(prediction, "shape", None) != getattr(previous, "shape", None):
-        raise _UjiCachePredictionFallback("shape_mismatch")
-    if getattr(prediction, "shape", None) != getattr(target_slice, "shape", None):
-        raise _UjiCachePredictionFallback("shape_mismatch")
-    if not bool(torch.isfinite(prediction).all().item()):
-        raise _UjiCachePredictionFallback("numeric_error")
-
-    prediction_norm = float(torch.linalg.vector_norm(prediction.float()).item())
-    previous_norm = float(torch.linalg.vector_norm(previous.float()).item())
-    if not math.isfinite(prediction_norm) or not math.isfinite(previous_norm):
-        raise _UjiCachePredictionFallback("numeric_error")
-    if previous_norm > 0.0 and prediction_norm > previous_norm * UJICACHE_MAX_NORM_RATIO:
-        raise _UjiCachePredictionFallback("norm_guard")
-    try:
-        return prediction.to(device=previous.device, dtype=previous.dtype)
-    except Exception as exc:
-        raise _UjiCachePredictionFallback("dtype_conversion") from exc
 
 
 def _capture_calibration_pair(
@@ -907,7 +639,7 @@ def _capture_calibration_pair(
     estimate: float | None = None
     try:
         if rel_l1 is not None and math.isfinite(float(rel_l1)):
-            candidate = _cache_poly1d(float(rel_l1), _ujicache_coefficients())
+            candidate = _cache_poly1d(float(rel_l1), _tea_coefficients())
             if math.isfinite(candidate):
                 estimate = candidate
         previous = slot.get("previous_residual")
@@ -946,7 +678,7 @@ def _capture_timestep_value(timesteps: Any, start: int, end: int) -> float | Non
         return None
 
 
-def _dump_ujicache_residual(
+def _dump_resrefine_residual(
     residual: Any,
     cond_or_uncond: list[int],
     batch_per_slot: int,
@@ -956,7 +688,7 @@ def _dump_ujicache_residual(
 ) -> None:
     if not (
         STATE.tensor_dump_active()
-        and STATE.dump_ujicache_residual
+        and STATE.dump_resrefine_residual
         and STATE.hareskip_enabled
     ):
         return
@@ -968,7 +700,7 @@ def _dump_ujicache_residual(
         local_call_index = STATE.tensor_dump_hareskip_local_call_index
         STATE.tensor_dump_hareskip_local_call_index += 1
         dump_tensor(
-            "ujicache_residual",
+            "resrefine_residual",
             residual[start:end],
             logical_step_index=step_index,
             local_call_index=local_call_index,
@@ -979,9 +711,9 @@ def _dump_ujicache_residual(
             extra={
                 "cache_device": str(cache_device),
                 "hareskip_model_call": STATE.hareskip_model_calls,
-                "formula": STATE.ujicache_formula,
-                "slope_ema_smoothing": STATE.ujicache_slope_ema_smoothing,
-                "curve_ema_smoothing": STATE.ujicache_curve_ema_smoothing,
+                "formula": STATE.resrefine_formula,
+                "slope_ema_smoothing": STATE.resrefine_slope_ema_smoothing,
+                "curve_ema_smoothing": STATE.resrefine_curve_ema_smoothing,
             },
         )
 
@@ -999,7 +731,7 @@ def _hareskip_log_call(
     slot_notes: dict[int, str | None],
     slot_ema_info: dict[int, dict[str, Any]],
 ) -> None:
-    if not STATE.ujicache_verbose_trace and STATE.hareskip_logged_calls >= 12:
+    if not STATE.hareskip_verbose_trace and STATE.hareskip_logged_calls >= 12:
         return
     STATE.hareskip_logged_calls += 1
     rel_text = ",".join(
@@ -1035,19 +767,19 @@ def _hareskip_log_call(
         f"call={STATE.hareskip_model_calls} step={step_index} "
         f"progress={progress:.3f} late={late_phase} streak={skip_streak} "
         f"decision={decision} reason={reason_text} "
-        f"formula={STATE.ujicache_formula} action={action_text} rel_l1={rel_text} "
-        f"threshold={STATE.ujicache_threshold:.4f} "
-        f"use_prediction_after={STATE.ujicache_use_prediction_after_progress:.2f} "
-        f"apply_from_skip={STATE.ujicache_apply_prediction_from_skip} "
-        f"prediction_strength={STATE.ujicache_prediction_strength:.2f} "
-        f"taylor2_curve_strength={STATE.ujicache_taylor2_curve_strength:.2f} "
-        f"slope_ema_smoothing={STATE.ujicache_slope_ema_smoothing:.2f} "
-        f"curve_ema_smoothing={STATE.ujicache_curve_ema_smoothing:.2f} "
+        f"formula={STATE.resrefine_formula} action={action_text} rel_l1={rel_text} "
+        f"threshold={STATE.tea_threshold:.4f} "
+        f"use_prediction_after={STATE.resrefine_use_prediction_after_progress:.2f} "
+        f"apply_from_skip={STATE.resrefine_apply_prediction_from_skip} "
+        f"prediction_strength={STATE.resrefine_prediction_strength:.2f} "
+        f"taylor2_curve_strength={STATE.resrefine_taylor2_curve_strength:.2f} "
+        f"slope_ema_smoothing={STATE.resrefine_slope_ema_smoothing:.2f} "
+        f"curve_ema_smoothing={STATE.resrefine_curve_ema_smoothing:.2f} "
         f"prediction_note={note_text} "
         f"ema_velocity_ready={velocity_ready_text} "
         f"ema_acceleration_ready={acceleration_ready_text} "
         f"dt_pred={dt_pred_text} "
-        f"dry_run={STATE.ujicache_dry_run}"
+        f"dry_run={STATE.hareskip_dry_run}"
     )
 
 
