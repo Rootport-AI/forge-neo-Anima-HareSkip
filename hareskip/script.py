@@ -9,6 +9,12 @@ from .auto_teacache import (
     parse_auto_teacache_csv,
 )
 from .callbacks import register_callbacks
+from .constants import (
+    EXPECTED_UI_ARG_COUNT,
+    HARESKIP_MODES,
+    MODE_HARESKIP,
+    MODE_TEACACHE,
+)
 from .diagnostics import log_generation_start, log_timing_summary
 from .logging import error, exception, info, warning
 from .model_detect import detect_model
@@ -50,148 +56,192 @@ class Script(scripts.Script):
                 value=_default_option("hareskip_enable", False),
                 elem_id="hareskip-enable",
             )
-            tea_preset = gr.Dropdown(
-                label="Tea preset",
-                choices=TEA_PRESETS,
-                value=TEA_PRESET_CUSTOM,
-                elem_id="tea-preset",
+            hareskip_mode = gr.Radio(
+                label="Skip mode",
+                choices=HARESKIP_MODES,
+                value=MODE_HARESKIP,
+                elem_id="hareskip-mode",
             )
-            tea_threshold = gr.Slider(
-                label="Rel L1 threshold",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.005,
-                value=0.07,
-                elem_id="tea-threshold",
-            )
-            tea_coefficient_profile = gr.Dropdown(
-                label="Coefficient profile",
-                choices=TEA_COEFFICIENT_PROFILES,
-                value=TEA_PROFILE_DEFAULT,
-                elem_id="tea-coefficient-profile",
-            )
-            p_anima_x = gr.Markdown(
-                value=_format_p_anima_x(TEA_PROFILE_DEFAULT),
-                elem_id="tea-p-anima-x",
-            )
-            gr.HTML(
-                "<style>"
-                "#tea-p-anima-x code {"
-                " background: none;"
-                " border: none;"
-                " padding: 0;"
-                " color: var(--body-text-color-subdued);"
-                " }"
-                "</style>",
-                elem_id="tea-p-anima-x-style",
-            )
-            tea_start_percent = gr.Slider(
-                label="Start progress",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.01,
-                value=0.48,
-                elem_id="tea-start-percent",
-            )
-            tea_end_percent = gr.Slider(
-                label="End progress",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.01,
-                value=0.76,
-                elem_id="tea-end-percent",
-            )
-            tea_max_skip_streak = gr.Slider(
-                label="Max skip streak (0 = off)",
-                minimum=0,
-                maximum=64,
-                step=1,
-                value=0,
-                elem_id="tea-max-skip-streak",
-            )
-            tea_force_full_interval = gr.Slider(
-                label="Force full interval (0 = off)",
-                minimum=0,
-                maximum=64,
-                step=1,
-                value=0,
-                elem_id="tea-force-full-interval",
-            )
-            resrefine_formula = gr.Dropdown(
-                label="Prediction formula",
-                choices=RESREFINE_FORMULAS,
-                value=RESREFINE_FORMULA_REUSE,
-                elem_id="resrefine-formula",
-            )
-            resrefine_use_prediction_after_progress = gr.Slider(
-                label="Use prediction after progress",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.01,
-                value=0.0,
-                interactive=False,
-                elem_id="resrefine-use-prediction-after-progress",
-            )
-            resrefine_apply_prediction_from_skip = gr.Slider(
-                label="Apply prediction from skip #",
-                minimum=1,
-                maximum=3,
-                step=1,
-                value=2,
-                interactive=False,
-                elem_id="resrefine-apply-prediction-from-skip",
-            )
-            resrefine_prediction_strength = gr.Slider(
-                label="Prediction strength",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.01,
-                value=0.50,
-                interactive=False,
-                elem_id="resrefine-prediction-strength",
-            )
-            resrefine_taylor2_curve_strength = gr.Slider(
-                label="Taylor2 curve strength",
-                minimum=0.0,
-                maximum=1.0,
-                step=0.01,
-                value=0.25,
-                interactive=False,
-                elem_id="resrefine-taylor2-curve-strength",
-            )
-            resrefine_slope_ema_smoothing = gr.Slider(
-                label="Slope EMA Smoothing",
-                minimum=0.0,
-                maximum=0.99,
-                step=0.01,
-                value=0.0,
-                interactive=False,
-                elem_id="resrefine-slope-ema-smoothing",
-            )
-            resrefine_curve_ema_smoothing = gr.Slider(
-                label="Curve EMA Smoothing",
-                minimum=0.0,
-                maximum=0.99,
-                step=0.01,
-                value=0.0,
-                interactive=False,
-                elem_id="resrefine-curve-ema-smoothing",
-            )
+
+            # --- HareSkip stochastic mode group (shown first, default) --------
+            with gr.Group(visible=True) as hareskip_mode_group:
+                hareskip_aggressiveness = gr.Slider(
+                    label="Skip aggressiveness",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.5,
+                    elem_id="hare-aggressiveness",
+                )
+                hareskip_skip_seed_offset = gr.Number(
+                    label="Skip seed offset",
+                    value=0,
+                    precision=0,
+                    elem_id="hare-skip-seed-offset",
+                )
+                hareskip_estimate_md = gr.Markdown(
+                    value=_format_hareskip_estimate(0.5),
+                    elem_id="hare-estimate",
+                )
+
+            # --- TeaCache mode group (hidden by default) ----------------------
+            with gr.Group(visible=False) as teacache_mode_group:
+                tea_preset = gr.Dropdown(
+                    label="Tea preset",
+                    choices=TEA_PRESETS,
+                    value=TEA_PRESET_CUSTOM,
+                    elem_id="tea-preset",
+                )
+                tea_threshold = gr.Slider(
+                    label="Rel L1 threshold",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.005,
+                    value=0.07,
+                    elem_id="tea-threshold",
+                )
+                tea_coefficient_profile = gr.Dropdown(
+                    label="Coefficient profile",
+                    choices=TEA_COEFFICIENT_PROFILES,
+                    value=TEA_PROFILE_DEFAULT,
+                    elem_id="tea-coefficient-profile",
+                )
+                p_anima_x = gr.Markdown(
+                    value=_format_p_anima_x(TEA_PROFILE_DEFAULT),
+                    elem_id="tea-p-anima-x",
+                )
+                gr.HTML(
+                    "<style>"
+                    "#tea-p-anima-x code {"
+                    " background: none;"
+                    " border: none;"
+                    " padding: 0;"
+                    " color: var(--body-text-color-subdued);"
+                    " }"
+                    "</style>",
+                    elem_id="tea-p-anima-x-style",
+                )
+                tea_start_percent = gr.Slider(
+                    label="Start progress",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.48,
+                    elem_id="tea-start-percent",
+                )
+                tea_end_percent = gr.Slider(
+                    label="End progress",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.76,
+                    elem_id="tea-end-percent",
+                )
+                tea_max_skip_streak = gr.Slider(
+                    label="Max skip streak (0 = off)",
+                    minimum=0,
+                    maximum=64,
+                    step=1,
+                    value=0,
+                    elem_id="tea-max-skip-streak",
+                )
+                tea_force_full_interval = gr.Slider(
+                    label="Force full interval (0 = off)",
+                    minimum=0,
+                    maximum=64,
+                    step=1,
+                    value=0,
+                    elem_id="tea-force-full-interval",
+                )
+                with gr.Accordion(
+                    "Auto Tea mode",
+                    open=False,
+                    elem_id="tea-auto-panel",
+                ):
+                    auto_teacache_enabled = gr.Checkbox(
+                        label="Enable Auto Tea mode",
+                        value=False,
+                        elem_id="tea-auto-enable",
+                    )
+                    auto_teacache_csv = gr.Textbox(
+                        label="Auto Tea CSV",
+                        lines=6,
+                        elem_id="tea-auto-csv",
+                    )
+
+            # --- ResRefine shared section (outside both mode groups) ----------
             with gr.Accordion(
-                "Auto Tea mode",
+                "ResRefine (residual prediction)",
                 open=False,
-                elem_id="tea-auto-panel",
+                elem_id="resrefine-panel",
             ):
-                auto_teacache_enabled = gr.Checkbox(
-                    label="Enable Auto Tea mode",
-                    value=False,
-                    elem_id="tea-auto-enable",
+                resrefine_formula = gr.Dropdown(
+                    label="Prediction formula",
+                    choices=RESREFINE_FORMULAS,
+                    value=RESREFINE_FORMULA_REUSE,
+                    elem_id="resrefine-formula",
                 )
-                auto_teacache_csv = gr.Textbox(
-                    label="Auto Tea CSV",
-                    lines=6,
-                    elem_id="tea-auto-csv",
+                resrefine_use_prediction_after_progress = gr.Slider(
+                    label="Use prediction after progress",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.0,
+                    interactive=False,
+                    elem_id="resrefine-use-prediction-after-progress",
                 )
+                resrefine_apply_prediction_from_skip = gr.Slider(
+                    label="Apply prediction from skip #",
+                    minimum=1,
+                    maximum=3,
+                    step=1,
+                    value=2,
+                    interactive=False,
+                    elem_id="resrefine-apply-prediction-from-skip",
+                )
+                resrefine_prediction_strength = gr.Slider(
+                    label="Prediction strength",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.50,
+                    interactive=False,
+                    elem_id="resrefine-prediction-strength",
+                )
+                resrefine_taylor2_curve_strength = gr.Slider(
+                    label="Taylor2 curve strength",
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=0.25,
+                    interactive=False,
+                    elem_id="resrefine-taylor2-curve-strength",
+                )
+                resrefine_slope_ema_smoothing = gr.Slider(
+                    label="Slope EMA Smoothing",
+                    minimum=0.0,
+                    maximum=0.99,
+                    step=0.01,
+                    value=0.0,
+                    interactive=False,
+                    elem_id="resrefine-slope-ema-smoothing",
+                )
+                resrefine_curve_ema_smoothing = gr.Slider(
+                    label="Curve EMA Smoothing",
+                    minimum=0.0,
+                    maximum=0.99,
+                    step=0.01,
+                    value=0.0,
+                    interactive=False,
+                    elem_id="resrefine-curve-ema-smoothing",
+                )
+                resrefine_cache_device = gr.Radio(
+                    label="Cache device",
+                    choices=RESREFINE_CACHE_DEVICES,
+                    value=RESREFINE_CACHE_DEVICE_CUDA,
+                    elem_id="resrefine-cache-device",
+                )
+
             with gr.Accordion("Debug log mode", open=False, elem_id="hareskip-debug-panel"):
                 debug_log_enabled = gr.Checkbox(
                     label="Enable debug log mode",
@@ -233,12 +283,6 @@ class Script(scripts.Script):
                     value=_default_option("hareskip_verbose_diagnose_log", False),
                     elem_id="hareskip-verbose-diagnose-log",
                 )
-            resrefine_cache_device = gr.Radio(
-                label="Cache device",
-                choices=RESREFINE_CACHE_DEVICES,
-                value=RESREFINE_CACHE_DEVICE_CUDA,
-                elem_id="resrefine-cache-device",
-            )
             hareskip_dry_run = gr.Checkbox(
                 label="Dry run",
                 value=False,
@@ -284,6 +328,16 @@ class Script(scripts.Script):
                 inputs=[tea_coefficient_profile],
                 outputs=[tea_start_percent, tea_end_percent, p_anima_x],
             )
+            hareskip_mode.change(
+                fn=_hareskip_mode_group_updates,
+                inputs=[hareskip_mode],
+                outputs=[hareskip_mode_group, teacache_mode_group],
+            )
+            hareskip_aggressiveness.change(
+                fn=_hareskip_estimate_updates,
+                inputs=[hareskip_aggressiveness],
+                outputs=[hareskip_estimate_md],
+            )
 
         return [
             enabled,
@@ -312,6 +366,9 @@ class Script(scripts.Script):
             auto_teacache_enabled,
             auto_teacache_csv,
             capture_calibration_pairs,
+            hareskip_mode,
+            hareskip_aggressiveness,
+            hareskip_skip_seed_offset,
         ]
 
     def before_process(self, p, *script_args):
@@ -583,7 +640,7 @@ def _safe_int(value, default: int) -> int:
         return default
 
 
-_EXPECTED_UI_ARG_COUNT = 26
+_EXPECTED_UI_ARG_COUNT = EXPECTED_UI_ARG_COUNT
 _ui_arg_count_warned = False
 
 
@@ -932,4 +989,41 @@ def _hareskip_enable_updates(enabled: bool):
     if enabled:
         return gr.update()
     return False
+
+
+def _hareskip_mode_group_updates(skip_mode: str):
+    """Toggle visibility of the HareSkip and TeaCache mode groups.
+
+    Returns (hareskip_group_update, teacache_group_update) so the two groups
+    are mutually exclusive. Unknown values fall back to HareSkip.
+    """
+    is_tea = skip_mode == MODE_TEACACHE
+    return gr.update(visible=not is_tea), gr.update(visible=is_tea)
+
+
+def _format_hareskip_estimate(aggressiveness) -> str:
+    """Static per-aggressiveness summary of the skip-probability band.
+
+    Renders p_cap and the sigmoid band centre from the pure probability model
+    (no schedule, so no per-run skip count). Wrapped in a broad try/except so a
+    UI callback can never raise; falls back to a neutral hint.
+    """
+    try:
+        from .probability_models import get_model
+
+        model = get_model("sigmoid_band_v0.1")
+        params = model.params_from_aggressiveness(float(aggressiveness))
+        return (
+            "`p_cap="
+            f"{params['p_cap']:.2f}"
+            f" z_enter={params['z_enter']:.2f}"
+            f" z_exit={params['z_exit']:.2f}`"
+            " — higher aggressiveness widens/raises the skip band."
+        )
+    except Exception:
+        return "`skip band summary unavailable`"
+
+
+def _hareskip_estimate_updates(aggressiveness):
+    return gr.update(value=_format_hareskip_estimate(aggressiveness))
 

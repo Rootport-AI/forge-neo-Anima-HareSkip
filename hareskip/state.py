@@ -261,9 +261,8 @@ class RuntimeState:
     capture_calibration_pairs: bool = False
 
     # HareSkip stochastic-mode configuration and per-generation pattern state.
-    # These are set programmatically for now (default HareSkip mode); the UI
-    # commit will wire hareskip_mode / hareskip_aggressiveness /
-    # hareskip_skip_seed_offset into apply_options.
+    # hareskip_mode / hareskip_aggressiveness / hareskip_skip_seed_offset are
+    # wired through apply_options from the UI (see constants.UI_ARG_ORDER).
     hareskip_mode: str = MODE_HARESKIP
     hareskip_aggressiveness: float = 0.5
     hareskip_skip_seed_offset: int = 0
@@ -384,6 +383,9 @@ class RuntimeState:
         auto_teacache_enabled: bool = False,
         auto_teacache_csv: str = "",
         capture_calibration_pairs: bool = False,
+        hareskip_mode: str = MODE_HARESKIP,
+        hareskip_aggressiveness: float = 0.5,
+        hareskip_skip_seed_offset: int = 0,
     ) -> None:
         self.enabled = bool(enabled)
         self.debug_log_enabled = bool(debug_log_enabled)
@@ -442,6 +444,15 @@ class RuntimeState:
         self.auto_teacache_enabled = bool(auto_teacache_enabled) and self.hareskip_enabled
         self.auto_teacache_csv = str(auto_teacache_csv or "")
         self.capture_calibration_pairs = bool(capture_calibration_pairs)
+
+        self.hareskip_mode = (
+            hareskip_mode if hareskip_mode in HARESKIP_MODES else MODE_HARESKIP
+        )
+        self.hareskip_aggressiveness = _clamp_float(hareskip_aggressiveness, 0.0, 1.0)
+        try:
+            self.hareskip_skip_seed_offset = int(hareskip_skip_seed_offset)
+        except Exception:
+            self.hareskip_skip_seed_offset = 0
 
     def active(self) -> bool:
         return (

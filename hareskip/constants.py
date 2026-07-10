@@ -19,12 +19,11 @@ argument names, in positional order, and ``EXPECTED_UI_ARG_COUNT`` is its
 length. A static test asserts ``len(UI_ARG_ORDER) == EXPECTED_UI_ARG_COUNT``
 and (once wiring lands) that ``apply_options`` has a matching signature.
 
-NOTE: ``script.py`` / ``state.py`` do NOT consume these constants yet. This
-module just defines them. The UI-restructure commit will (a) rewire the two
-files to reference these constants and (b) extend the list to 29 entries by
-inserting ``hareskip_mode`` / ``hareskip_aggressiveness`` /
-``hareskip_skip_seed_offset``. Until then these values mirror the CURRENT
-26-argument state of the repository.
+``script.py`` sets ``_EXPECTED_UI_ARG_COUNT`` from ``EXPECTED_UI_ARG_COUNT``
+and ``state.py`` ``apply_options`` mirrors ``UI_ARG_ORDER`` positionally. The
+three HareSkip stochastic-mode arguments (``hareskip_mode`` /
+``hareskip_aggressiveness`` / ``hareskip_skip_seed_offset``) are appended at
+the end so the original 26 positions are untouched (29 total).
 """
 
 # --- Skip-strategy mode identifiers -----------------------------------------
@@ -42,7 +41,8 @@ HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE]
 # consumed by ``RuntimeState.apply_options``. Keep this list, the ``ui()``
 # return list, and the ``apply_options`` signature 1:1 in order and count.
 #
-# This currently reflects the 26-argument repo state (pre UI restructure).
+# The original 26 arguments keep their positions; the three HareSkip
+# stochastic-mode arguments are appended at the end (29 total).
 UI_ARG_ORDER = [
     "enabled",
     "debug_log_enabled",
@@ -70,6 +70,9 @@ UI_ARG_ORDER = [
     "auto_teacache_enabled",
     "auto_teacache_csv",
     "capture_calibration_pairs",
+    "hareskip_mode",
+    "hareskip_aggressiveness",
+    "hareskip_skip_seed_offset",
 ]
 
 EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)
