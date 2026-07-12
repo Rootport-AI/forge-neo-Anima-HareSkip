@@ -194,7 +194,7 @@ window 外のステップは強制フル（`p = 0.0`, `skip = False`）。既定
 skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2^63
 ```
 
-組み込み `hash()` は使わない（プロセス毎ソルトで再現不能になるため）。実装は `skip_pattern.derive_skip_seed`。`generate_skip_pattern` は各再抽選で `random.Random(skip_seed + attempt)` を使い決定論を保つ。
+組み込み `hash()` は使わない（プロセス毎ソルトで再現不能になるため）。実装は `skip_pattern.derive_skip_seed`。`generate_skip_pattern` は各再抽選で `random.Random(skip_seed + attempt)` を使い決定論を保つ。`offset` は「シード値」ではなく派生計算のオフセットであり、`offset=0` は「その画像シードに対する標準パターン」を意味する（ランダムでもシード 0 でもない）。パターンのランダム性の源は画像シードで、offset は画像シードを固定したままパターンだけ引き直す用途に使う。
 
 ### 4.7 infotext キー一覧（`script.py` で確認）
 
@@ -240,5 +240,6 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 - `p_cap` / `z_enter` の較正手順の確立（実機での a → skip 数較正）。
 - 確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。
 - 再キャリブレーション実験計画は `docs/HANDOFF-next-session.md` §4.5 参照。
+- **Skip seed offset の Forge 準拠化**（2026-07-12 決定、未実装）: `offset=-1` をランダム扱いにする、サイコロ／リユースボタンの追加、`infotext_fields` 登録による PNG Info タブからの HareSkip 設定一式復元。詳細は `docs/HANDOFF-next-session.md` §4.6 参照。
 
 較正の実運用は §5-1 と `docs/HANDOFF-next-session.md` の「予想される修正ポイント」に従い、`probability_models.py` に新バージョン（例 `sigmoid_band_v0.2`）を登録して切り替える方針（v0.1 は書き換えない）。
