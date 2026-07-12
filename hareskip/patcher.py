@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .constants import MODE_HARESKIP, MODE_MANUAL
+from .constants import MODE_HARESKIP, MODE_MANUAL, MODE_TEACACHE
 from .logging import info, warning
 from .skip_pattern import derive_skip_seed, generate_skip_pattern
 from .state import (
@@ -172,22 +172,34 @@ def _apply_hareskip_patch() -> PatchResult:
         "cls": anima_cls,
         "attr": target_name,
     }
-    info(
+    # kind/target/mode + ResRefine fields (mode-independent) are always
+    # emitted. TeaCache-only fields (threshold / progress / source) are emitted
+    # only in TeaCache mode, mirroring the mode-selected infotext split in
+    # script.py._apply_infotext_metadata — they are meaningless in HareSkip /
+    # Manual Skip modes and were misleadingly logged there before.
+    message = (
         "applied experimental patch kind=hareskip "
         f"target=backend.nn.anima.Anima.{target_name} "
         f"mode={STATE.hareskip_mode} "
         f"formula={STATE.resrefine_formula} "
-        f"threshold={STATE.tea_threshold:.4f} "
-        f"progress={STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f} "
+    )
+    if STATE.hareskip_mode == MODE_TEACACHE:
+        message += (
+            f"threshold={STATE.tea_threshold:.4f} "
+            f"progress={STATE.tea_start_percent:.2f}..{STATE.tea_end_percent:.2f} "
+        )
+    message += (
         f"use_prediction_after={STATE.resrefine_use_prediction_after_progress:.2f} "
         f"apply_from_skip={STATE.resrefine_apply_prediction_from_skip} "
         f"prediction_strength={STATE.resrefine_prediction_strength:.2f} "
         f"taylor2_curve_strength={STATE.resrefine_taylor2_curve_strength:.2f} "
         f"slope_ema_smoothing={STATE.resrefine_slope_ema_smoothing:.2f} "
         f"curve_ema_smoothing={STATE.resrefine_curve_ema_smoothing:.2f} "
-        f"cache_device={STATE.resrefine_cache_device} "
-        f"source={STATE.tea_modulated_source}"
+        f"cache_device={STATE.resrefine_cache_device}"
     )
+    if STATE.hareskip_mode == MODE_TEACACHE:
+        message += f" source={STATE.tea_modulated_source}"
+    info(message)
     return PatchResult(True, kind, "applied")
 
 
@@ -400,12 +412,19 @@ def _hareskip_forward_body(
             STATE.hareskip_first_full_calcs += 1
         if force_full_reason:
             STATE.hareskip_forced_full_calcs += 1
+        # Manual Skip's normal full compute (no shared force-full) has no
+        # rel_l1 "threshold" semantics; tag it explicitly so the log doesn't
+        # fall back to reason=threshold. Tea / HareSkip pass force_full_reason
+        # (or None) exactly as before.
+        full_reason = force_full_reason
+        if manual_mode and force_full_reason is None:
+            full_reason = "manual_full"
         _hareskip_log_call(
             "full",
             step_index,
             progress,
             rels,
-            reason=force_full_reason,
+            reason=full_reason,
             late_phase=False,
             skip_streak=0,
             slot_actions={},
@@ -660,6 +679,21 @@ def _tea_coefficients() -> list[float]:
     return tea_coefficients_for_profile(STATE.tea_coefficient_profile)
 
 
+def _fmt_step_display(step_index: int) -> str:
+    """Render a 0-based internal step index for user-visible logs, 1-based.
+
+    Returns ``{step_index+1}/{total}`` when the generation's total step count is
+    known (``STATE.generation_steps``, captured at generation start), else the
+    ``{step_index+1}`` form alone. All user-visible step numbering in logs and
+    infotext is 1-based to match the Forge "Sampling steps" count; internal
+    storage stays 0-based.
+    """
+    steps = STATE.generation_steps
+    if steps and steps > 0:
+        return f"{step_index + 1}/{steps}"
+    return f"{step_index + 1}"
+
+
 def _progress(step_index: int) -> float:
     steps = STATE.generation_steps
     if not steps or steps <= 1:
@@ -775,7 +809,7 @@ def _hareskip_should_calc(step_index: int) -> bool:
         if STATE.hareskip_verbose_trace:
             info(
                 "hareskip_step="
-                f"step={step_index} z={pattern.z_by_step[step_index]:.4f} "
+                f"step={_fmt_step_display(step_index)} z={pattern.z_by_step[step_index]:.4f} "
                 f"p={pattern.p_by_step[step_index]:.4f} "
                 f"skip={bool(skip[step_index])}"
             )
@@ -992,9 +1026,20 @@ def _hareskip_log_call(
     action_text = ",".join(
         f"{key}:{slot_actions[key]}" for key in sorted(slot_actions)
     ) or "None"
-    reason_text = ",".join(
+    # Reason assembly: an explicit reason argument (e.g. "manual", "manual_full",
+    # a force-full reason) is authoritative and goes FIRST; per-slot resrefine
+    # reasons are appended after it. When no explicit reason is given, fall back
+    # to the per-slot reasons alone, or "threshold" (Tea's rel_l1 default) if
+    # those are empty too. This keeps the caller-supplied tag from being
+    # swallowed by non-empty slot reasons (e.g. Manual Skip with the Reuse
+    # formula, which always fills slot reasons with "formula").
+    slot_reason_text = ",".join(
         f"{key}:{slot_reasons[key]}" for key in sorted(slot_reasons) if slot_reasons[key]
-    ) or (reason or "threshold")
+    )
+    if reason:
+        reason_text = f"{reason},{slot_reason_text}" if slot_reason_text else reason
+    else:
+        reason_text = slot_reason_text or "threshold"
     note_text = ",".join(
         f"{key}:{slot_notes[key]}" for key in sorted(slot_notes) if slot_notes[key]
     ) or "None"
@@ -1015,7 +1060,7 @@ def _hareskip_log_call(
     dt_pred_text = ",".join(dt_pred_parts) or "None"
     info(
         "hareskip_call="
-        f"call={STATE.hareskip_model_calls} step={step_index} "
+        f"call={STATE.hareskip_model_calls} step={_fmt_step_display(step_index)} "
         f"progress={progress:.3f} late={late_phase} streak={skip_streak} "
         f"decision={decision} reason={reason_text} "
         f"formula={STATE.resrefine_formula} action={action_text} rel_l1={rel_text} "

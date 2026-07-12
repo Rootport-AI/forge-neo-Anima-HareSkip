@@ -208,6 +208,8 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 | Manual Skip モードのみ | `Manual skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`） |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
 
+**ステップ番号は 1 始まりで統一**: ログ・infotext のユーザー可視ステップ表記はすべて 1 始まりで Forge の `Sampling steps` 数と一致する（例 `step=10/30`、`Manual skipped_steps = 10 12`）。内部インデックスは 0 始まりで格納し、出力時にのみ `+1` 変換する（表示を直すために格納表現を変えない）。
+
 verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / skip をコンソール出力。パターン一括生成時は `hareskip_pattern=` サマリを 1 行出力。
 
 ---

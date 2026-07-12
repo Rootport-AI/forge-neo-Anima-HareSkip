@@ -47,6 +47,7 @@ Also removed in this fork: the legacy metadata clearer helper and its call site 
 - Do not allow cache/prediction use when `previous_residual` is missing, in either mode.
 - Restore monkey patches on disable, unsupported model, unload, and degraded paths.
 - Do not silently fail. Log degraded or fallback reasons with the `[HareSkip]` prefix.
+- All user-visible step numbering in logs and infotext is 1-based, matching Forge's `Sampling steps` count (e.g. `step=10/30`). Internal step indices are stored 0-based and converted (`+1`) only at output time — never change the stored representation to fix a display.
 - Forge Neo can pass unused kwargs such as `control` into `Anima.forward`; HareSkip should ignore unused kwargs and consume only the values it needs, especially `transformer_options`.
 - `Modulated source` (`hareskip.state.TEA_SOURCE_FIRST_BLOCK_SHIFT` etc.) is not a UI control in TeaCache mode; it is derived from `Coefficient profile`. Do not reintroduce a Modulated source dropdown.
 - `TEA_PRESET_REGISTRY` in `state.py` is the single source of truth for both TeaCache coefficient profiles and their recommended Start/End windows. Add presets there; coefficients and the `p_Anima(x)` display follow automatically.

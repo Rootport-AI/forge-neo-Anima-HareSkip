@@ -23,7 +23,7 @@ def log_generation_start(p: Any) -> None:
     detection = STATE.model_detection
     proc = processing_info(p)
     info(
-        f"version={__version__} enabled={STATE.enabled} mode={STATE.mode} "
+        f"version={__version__} enabled={STATE.enabled} debug_mode={STATE.mode} "
         f"status={STATE.status} source={STATE.generation_start_source}"
     )
 
@@ -193,7 +193,10 @@ def log_timing_summary() -> None:
             f"fallback_used={STATE.hareskip_fallback_used} "
             f"dry_run_predictions={STATE.hareskip_dry_run_predictions} "
             f"skip_rate={skip_rate:.3f} "
-            f"skipped_steps={_fmt_step_ranges(STATE.hareskip_skipped_steps)}"
+            # STATE.hareskip_skipped_steps is stored 0-based; convert to 1-based
+            # for display so it matches pattern_skipped_steps (already 1-based)
+            # and Forge's Sampling steps numbering.
+            f"skipped_steps={_fmt_step_ranges([s + 1 for s in STATE.hareskip_skipped_steps])}"
             f"{pattern_fields} "
             f"first_full_calcs={STATE.hareskip_first_full_calcs} "
             f"forced_full_calcs={STATE.hareskip_forced_full_calcs} "
