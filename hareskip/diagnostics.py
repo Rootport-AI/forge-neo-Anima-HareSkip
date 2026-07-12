@@ -209,6 +209,25 @@ def log_timing_summary() -> None:
             f"capture_pairs={STATE.calibration_capture_records} "
             f"unavailable_reason={_fmt(STATE.hareskip_unavailable_reason)}"
         )
+        # Zero-execution detector: the denoiser ran (sampling happened) but our
+        # patched Anima.forward was never invoked. The most likely cause is
+        # another extension (e.g. a legacy UjiCache) that also monkey-patches
+        # Anima.forward and overwrote our wrapper with its own saved original,
+        # silently removing HareSkip from the call chain.
+        if (
+            STATE.hareskip_enabled
+            and STATE.denoiser_calls > 0
+            and STATE.hareskip_model_calls == 0
+        ):
+            warning(
+                "hareskip_patch_never_ran "
+                f"denoiser_calls={STATE.denoiser_calls} model_calls=0; "
+                "the patched Anima.forward was never called — suspected "
+                "conflict with another extension patching Anima.forward "
+                "(e.g. legacy UjiCache)"
+            )
+
+
 def _should_warn_unsupported_model() -> bool:
     return STATE.hareskip_enabled
 
@@ -263,9 +282,13 @@ def _current_sd_model() -> Any:
 
 
 def _is_patch_active(kind: str) -> Any:
+    # Report the truthful active state: whether OUR wrapper is still installed
+    # (is_patch_installed verifies wrapper identity), not merely whether we
+    # registered a patch. This makes active= flip to False when another
+    # extension has clobbered our Anima.forward wrapper.
     try:
-        from .patcher import is_patched
+        from .patcher import is_patch_installed
 
-        return is_patched(kind)
+        return is_patch_installed(kind)
     except Exception:
         return "unknown"

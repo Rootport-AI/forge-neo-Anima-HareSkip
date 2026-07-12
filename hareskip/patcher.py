@@ -36,6 +36,24 @@ def remove_patch(kind: str) -> PatchResult:
     if patch is None:
         return PatchResult(True, kind, "not patched")
     restore = patch.get("restore") if isinstance(patch, dict) else None
+    # Guarded restore: only restore the original attribute if OUR wrapper is
+    # still the one installed. Another extension patching the same
+    # Anima.forward may have overwritten our wrapper after we applied it;
+    # calling restore() then would clobber that extension's patch (and any
+    # further chain) with our stale saved original — a second act of
+    # destruction disguised as cleanup. In that case just drop our registry
+    # entry and warn.
+    cls = patch.get("cls") if isinstance(patch, dict) else None
+    attr = patch.get("attr") if isinstance(patch, dict) else None
+    wrapper = patch.get("wrapper") if isinstance(patch, dict) else None
+    if cls is not None and attr is not None and wrapper is not None:
+        current = getattr(cls, attr, None)
+        if current is not wrapper:
+            warning(
+                f"hareskip_patch_not_ours kind={kind}; skipping restore "
+                "(another extension appears to have overwritten Anima.forward)"
+            )
+            return PatchResult(True, kind, "skipped restore (not ours)")
     if callable(restore):
         restore()
     info(f"removed patch kind={kind}")
@@ -56,9 +74,48 @@ def is_patched(kind: str) -> bool:
     return kind in STATE.patches
 
 
+def is_patch_installed(kind: str) -> bool:
+    """True iff our registered wrapper is STILL the installed attribute.
+
+    Stronger than ``is_patched`` (registry membership): verifies our wrapper
+    identity against the live class attribute using the fields stored at apply
+    time, so it detects a foreign clobber. Cheap — no Forge import; reads only
+    the already-captured ``cls``/``attr``/``wrapper`` references. Falls back to
+    registry membership when those fields are absent (older/partial entries).
+    """
+    patch = STATE.patches.get(kind)
+    if not isinstance(patch, dict):
+        return False
+    cls = patch.get("cls")
+    attr = patch.get("attr")
+    wrapper = patch.get("wrapper")
+    if cls is None or attr is None or wrapper is None:
+        return True
+    return getattr(cls, attr, None) is wrapper
+
+
 def _apply_hareskip_patch() -> PatchResult:
     kind = "hareskip"
     if is_patched(kind):
+        # Integrity check: verify OUR wrapper is still installed. Another
+        # extension patching the same Anima.forward may have overwritten
+        # (clobbered) our wrapper after we applied it — is_patched() only
+        # consults our own registry and cannot see that. If clobbered,
+        # self-heal by reinstalling our wrapper over the current attribute;
+        # the previously saved original_forward remains valid.
+        patch = STATE.patches.get(kind)
+        cls = patch.get("cls") if isinstance(patch, dict) else None
+        attr = patch.get("attr") if isinstance(patch, dict) else None
+        wrapper = patch.get("wrapper") if isinstance(patch, dict) else None
+        if cls is not None and attr is not None and wrapper is not None:
+            if getattr(cls, attr, None) is wrapper:
+                return PatchResult(True, kind, "already patched")
+            warning(
+                f"hareskip_patch_clobbered detected kind={kind}; reapplying "
+                "(another extension appears to have overwritten Anima.forward)"
+            )
+            setattr(cls, attr, wrapper)
+            return PatchResult(True, kind, "reapplied")
         return PatchResult(True, kind, "already patched")
 
     try:
@@ -109,7 +166,12 @@ def _apply_hareskip_patch() -> PatchResult:
     def restore() -> None:
         setattr(anima_cls, target_name, original_forward)
 
-    STATE.patches[kind] = {"restore": restore}
+    STATE.patches[kind] = {
+        "restore": restore,
+        "wrapper": hareskip_forward,
+        "cls": anima_cls,
+        "attr": target_name,
+    }
     info(
         "applied experimental patch kind=hareskip "
         f"target=backend.nn.anima.Anima.{target_name} "
