@@ -1,5 +1,9 @@
 # Auto Uji Mode Spec v1.0
 
+> This document applies to HareSkip's **TeaCache mode** (formerly UjiCache). Content below is unchanged from the original UjiCache-era note.
+>
+> Archived on 2026-07-10 as historical material — superseded as a live reference by [`docs/ManualSkip-spec.md`](../ManualSkip-spec.md) §10 (multi-row/multiline expansion design for Manual Skip mode, which documents the current row-expansion mechanism) and by the live Auto Tea mode implementation in `hareskip/script.py` / `hareskip/auto_teacache.py`.
+
 ## Purpose
 
 Auto Uji mode runs multiple UjiCache parameter rows from one CSV in a single Generate action.

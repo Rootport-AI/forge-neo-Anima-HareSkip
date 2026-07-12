@@ -31,6 +31,7 @@
 - **テスト**: `pytest tests/ -q` → **89 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py` / `test_manual_skip.py`）。gradio/Forge を import せず実行可能。
 - **済み**: 純粋モジュール実装・単体テスト、3 モードディスパッチ（HareSkip / TeaCache / Manual Skip）、スケジュール捕捉ヘルパ、UI 再構成、**34 引数 3 点同期**（α+1 で skip window / zone boundaries の 4 スカラー、Manual Skip mode で `manual_skip_steps` を末尾追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、3 ゾーン max-skip-streak（final ゾーン廃止）、ユーザー設定可能 skip window（旧自動ガード置換）、Manual Skip mode（`hareskip/manual_skip.py`）、infotext 分割、docs 一式。**Manual Skip mode 実機検証＋ UjiCache 等価性証明済み**（2026-07-13、§3-9）。他拡張による `Anima.forward` パッチ衝突に対する自己修復・警告（`hareskip_patch_clobbered` / `hareskip_patch_not_ours` / `hareskip_patch_never_ran`, `is_patch_installed()`）、コンソールログの1始まりステップ表記統一（`step=n/total`）。
 - **未**: HareSkip 確率モードの実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性）。§3 のチェックリストが対象（Manual Skip 項目は完了済み）。
+- 本ドキュメント自体のコミット（docs のみ）が HEAD の場合があるため、コード最新＝`5c20835`、docs 追記＝`796c15f` 以降を参照すること。
 
 ---
 
