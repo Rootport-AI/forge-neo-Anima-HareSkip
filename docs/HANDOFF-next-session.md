@@ -1,7 +1,7 @@
 # HareSkip 次セッション向けハンドアウト
 
-- 作成日: 2026-07-10（α+1・Manual Skip mode 追加後に更新）
-- HEAD コミット: `a67f5594602083a50d23c3966542290f0ab78e43`（branch `main`, clean）
+- 作成日: 2026-07-10（α+1・Manual Skip mode 追加後に更新）／2026-07-13 更新（3件のバグ修正・Manual Skip 実機検証＋等価性証明・1始まりログ規約の反映）
+- HEAD コミット: `5c20835ac0caa9120948015f312ecbd90e9b7e6d`（branch `main`, clean）
 
 このファイルは、次の Claude セッション（またはユーザー）が再調査ゼロで作業を引き継ぐためのハンドオフである。設計の正典は [`docs/HareSkip-design.md`](HareSkip-design.md)、要件・設計・仕様の統合資料は [`docs/SPEC-alpha.md`](SPEC-alpha.md)。
 
@@ -9,13 +9,16 @@
 
 ## 1. 現在地
 
-α版＋α+1（3 ゾーン化・RangeSlider・Manual Skip mode）は実装完了。**実機検証は未実施**（開発マシンに Forge/GPU が無いため）。
+α版＋α+1（3 ゾーン化・RangeSlider・Manual Skip mode）は実装完了。**Manual Skip mode は実機検証済み**（2026-07-13、§3-9 参照）。HareSkip 確率モードの実機検証（z 符号、a→skip 数較正等）はまだ未実施。
 
 コミット（`main` 直上、抜粋・新しい順、すべて `Co-Authored-By: Claude Fable 5`）:
 
 | hash | 内容 |
 | --- | --- |
-| `a67f559` | feat: Manual Skip mode 追加（明示ステップ指定・独立モジュール、= HEAD） |
+| `5c20835` | fix: ステップログを1始まりに統一・decision reason を明確化（= HEAD） |
+| `28d24ee` | fix: 他拡張による Anima.forward パッチ衝突への防御的パッチング |
+| `6dee42e` | fix: Manual Skip リストが generation reset で消える不具合を修正 |
+| `a67f559` | feat: Manual Skip mode 追加（明示ステップ指定・独立モジュール） |
 | `54cf89b` | docs: Manual Skip mode 仕様書追加（設計確定） |
 | `03e0acc` | docs: 2026-07-10 ブレインストームの再較正実験計画を追加 |
 | `aaa2aea` | feat: skip window / zone の dual-thumb RangeSlider コントロール追加 |
@@ -25,9 +28,16 @@
 | `f2641b3` | docs: α版統合仕様書と次セッションハンドオフ追加 |
 | `5520a92` | docs: README/AGENTS/CHANGELOG/NOTICE を HareSkip 用に書き直し |
 
-- **テスト**: `pytest tests/ -q` → **87 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py` / `test_manual_skip.py`）。gradio/Forge を import せず実行可能。
-- **済み**: 純粋モジュール実装・単体テスト、3 モードディスパッチ（HareSkip / TeaCache / Manual Skip）、スケジュール捕捉ヘルパ、UI 再構成、**34 引数 3 点同期**（α+1 で skip window / zone boundaries の 4 スカラー、Manual Skip mode で `manual_skip_steps` を末尾追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、3 ゾーン max-skip-streak（final ゾーン廃止）、ユーザー設定可能 skip window（旧自動ガード置換）、Manual Skip mode（`hareskip/manual_skip.py`）、infotext 分割、docs 一式。
-- **未**: 実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性、Manual Skip 動作）。§3 のチェックリストが対象。
+- **テスト**: `pytest tests/ -q` → **89 件緑**（`test_arg_sync.py` / `test_probability_models.py` / `test_skip_pattern.py` / `test_manual_skip.py`）。gradio/Forge を import せず実行可能。
+- **済み**: 純粋モジュール実装・単体テスト、3 モードディスパッチ（HareSkip / TeaCache / Manual Skip）、スケジュール捕捉ヘルパ、UI 再構成、**34 引数 3 点同期**（α+1 で skip window / zone boundaries の 4 スカラー、Manual Skip mode で `manual_skip_steps` を末尾追加）、dual-thumb RangeSlider コントロール＋プレーン Slider フォールバック、3 ゾーン max-skip-streak（final ゾーン廃止）、ユーザー設定可能 skip window（旧自動ガード置換）、Manual Skip mode（`hareskip/manual_skip.py`）、infotext 分割、docs 一式。**Manual Skip mode 実機検証＋ UjiCache 等価性証明済み**（2026-07-13、§3-9）。他拡張による `Anima.forward` パッチ衝突に対する自己修復・警告（`hareskip_patch_clobbered` / `hareskip_patch_not_ours` / `hareskip_patch_never_ran`, `is_patch_installed()`）、コンソールログの1始まりステップ表記統一（`step=n/total`）。
+- **未**: HareSkip 確率モードの実機検証（拡張ロード、スキップ発火、z 符号、a→skip 数較正、再現性、PNG メタデータ、TeaCache ビット同一性）。§3 のチェックリストが対象（Manual Skip 項目は完了済み）。
+
+---
+
+## 1.5 次セッション最優先作業
+
+1. **【最優先・実装着手可】Manual Skip 複数行化の実装**: 2026-07-13 ユーザー承認済みの確定設計。設計は完全に決まっており、追加のブレインストームは不要 — そのまま実装フェーズに入れる。詳細仕様は `docs/ManualSkip-spec.md` §10「複数行化（v2、2026-07-13 設計確定・未実装）」参照。要点: テキストボックスを multiline 化し、空でない各行 = 1ジョブ（現行1行文法をそのまま流用、ヘッダ・範囲記法は導入しない）、空行は無視、全行を `before_process` で事前検証（不正行は行番号を名指ししてジョブ全体を中止）、Auto Tea mode の展開機構（`p.n_iter` を行数倍化）を再利用、全行が同一 seed テンプレートを共有、単一行入力は完全後方互換。
+2. HareSkip 確率モードの実機検証（§3 のチェックリスト項目 1〜8）— 引き続き優先度が高いが、上記 Manual Skip 複数行化より後で良い。
 
 ---
 
@@ -74,7 +84,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 6. **TeaCache モードが旧 UjiCache と同一挙動**: TeaCache モードに切替え、同条件で旧 UjiCache とビット同一の skip 挙動・画質か。
 7. **PNG infotext**: 保存画像メタデータに `Hare skipped_steps` / `Hare skip_count` / `Hare skip_seed` / `Hare skip_window` / `Hare zone_boundaries` / `Hare params` 等が入るか（`postprocess_image` 書き込み）。
 8. **RangeSlider レンダリング**: HareSkip グループに dual-thumb の「Skip window (progress)」（`hare-skip-window`）と「Zone boundaries (logSNR proxy)」（`hare-zone-boundaries`）が表示され、両端つまみで値を動かすと `Hare skip_window` / `Hare zone_boundaries` infotext に反映されるか（RangeSlider → 隠し `gr.Number` ミラー → `apply_options` の経路）。Forge neo core は `gradio_rangeslider==0.0.8` を同梱するため通常この経路で描画される。フォールバック（RangeSlider 不在時のプレーン Slider 4 本）は**わざわざ検証用にアンインストールする必要は無い**——両経路はコードに実装済みで、引数数は 34 で不変（`tests/test_arg_sync.py` が静的に保証）。RangeSlider 版の window / zones を動かしたとき infotext が変化すれば配線は正しい。
-9. **Manual Skip mode 動作確認**: Skip mode Radio を「Manual Skip」に切替え、「Manual skip steps」テキストボックスに例えば `10, 12` を指定して生成。(a) `hareskip_call=` ログの当該ステップ（step=10 と step=12、1始まり。`step=10/30` のように `/総ステップ数` 付き）で `decision=fallback`/`prediction`・`reason=manual`（Reuse formula 使用時は `reason=manual,0:formula,1:formula` のように付随）が出て、他ステップは `decision=full` であること。(b) PNG/infotext の `Manual skipped_steps` に実現値 `10 12` が入ること。(c) 範囲外（`p.steps` 超）・`1` の指定・非数値（`abc` 等）が **生成前に** `Manual Skip error:` で止まること（フル演算にフォールバックせずエラー中止）。(d) 空欄指定で全ステップフル演算（baseline）になること。sigma スケジュール捕捉が失敗する環境でも Manual Skip は独立動作するため、HareSkip モード不動作の切り分け診断にも使える。
+9. **Manual Skip mode 動作確認 — ✅ DONE（2026-07-13）**: Skip mode Radio を「Manual Skip」に切替え、「Manual skip steps」テキストボックスに `15, 17, 19, 21, 23`（1始まり）を指定して生成し、旧 UjiCache 拡張が同じステップを0始まり（`14, 16, 18, 20, 22`）でスキップした過去の生成と比較。**結果: ビット同一**（Nz DoppelPix Judge: LPIPS=0.000000, SSIM=1.000000, PSNR=inf。所要時間も整合: 73.1s vs 72.5s、スキップ各ステップ約0.004s）。Manual Skip のスキップ実行機構（residual Reuse 経路）が UjiCache のそれと完全等価であることを実測で証明。検証マシン上の旧 UjiCache 拡張は本検証後に無効化済み。詳細は `docs/ManualSkip-spec.md` §9。
+   - (a)〜(d) の個別動作確認項目（ログの `step=n/total` 1始まり表記・`reason=manual`/`manual_full`・infotext・エラー中止・空欄baseline）も本検証で通過を確認済み。ログ表記は `5c20835` で1始まりに統一されており、上記結果はその修正後の状態。
 
 ---
 

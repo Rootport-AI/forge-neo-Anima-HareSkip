@@ -208,9 +208,11 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 | Manual Skip モードのみ | `Manual skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`） |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
 
-**ステップ番号は 1 始まりで統一**: ログ・infotext のユーザー可視ステップ表記はすべて 1 始まりで Forge の `Sampling steps` 数と一致する（例 `step=10/30`、`Manual skipped_steps = 10 12`）。内部インデックスは 0 始まりで格納し、出力時にのみ `+1` 変換する（表示を直すために格納表現を変えない）。
+**ステップ番号は 1 始まりで統一**: ログ・infotext のユーザー可視ステップ表記はすべて 1 始まりで Forge の `Sampling steps` 数と一致する（例 `step=10/30`、`Manual skipped_steps = 10 12`）。内部インデックスは 0 始まりで格納し、出力時にのみ `+1` 変換する（表示を直すために格納表現を変えない）。2026-07-13（`5c20835`）に `hareskip_call=` / `hareskip_step=` / `hareskip_summary=` の残る0始まり表記箇所を共通ヘルパ `_fmt_step_display`（`STATE.generation_steps` 既知なら `{n+1}/{total}`、未知なら `{n+1}`）で統一。同コミットで decision reason も整理: Manual Skip の通常フル演算は `reason=manual_full`（従来 Tea 専用語彙の `threshold` に誤フォールバックしていた）、`_hareskip_log_call` は明示 reason 引数を先頭に置き ResRefine スロット理由をその後に付す（例 `reason=manual,0:formula,1:formula`）。
 
 verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / skip をコンソール出力。パターン一括生成時は `hareskip_pattern=` サマリを 1 行出力。
+
+**防御的パッチング（2026-07-13, `28d24ee`）**: UjiCache 等、同一 `Anima.forward` を patch する他拡張と共存した場合、そちらの patch がこちらの wrapper を上書き・teardown 時に上書きしたまま自身の保存 original を setattr する事故が起こり得る（`model_calls=0` として観測される）。対策として `STATE.patches[kind]` に wrapper/cls/attr を保持し、apply 時に整合性チェック（wrapper が入れ替わっていれば `hareskip_patch_clobbered` を警告し自己修復・再適用）、remove 時のガード（自分の wrapper が入っていなければ `hareskip_patch_not_ours` を警告しレジストリのみ破棄、他拡張の patch には触れない）を実装。`is_patch_installed()`（wrapper 同一性チェック）を追加し診断表示の `active=` フィールドに使用（`is_patched()` はレジストリ所属のみを見る軽量版として存置）。`log_timing_summary` に zero-execution 検出（`hareskip_enabled` かつ `denoiser_calls>0` だが `model_calls==0` の場合に `hareskip_patch_never_ran` を警告）を追加。
 
 ---
 
@@ -243,5 +245,6 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 - 確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。
 - 再キャリブレーション実験計画は `docs/HANDOFF-next-session.md` §4.5 参照。
 - **Skip seed offset の Forge 準拠化**（2026-07-12 決定、未実装）: `offset=-1` をランダム扱いにする、サイコロ／リユースボタンの追加、`infotext_fields` 登録による PNG Info タブからの HareSkip 設定一式復元。詳細は `docs/HANDOFF-next-session.md` §4.6 参照。
+- **Manual Skip 複数行化**（2026-07-13 設計確定、未実装、次セッション最優先）: Manual skip steps テキストボックスを multiline 化し、空でない各行を1ジョブとして Auto Tea mode の展開機構で順次生成する。詳細は `docs/ManualSkip-spec.md` §10、`docs/HANDOFF-next-session.md` §1.5 参照。
 
 較正の実運用は §5-1 と `docs/HANDOFF-next-session.md` の「予想される修正ポイント」に従い、`probability_models.py` に新バージョン（例 `sigmoid_band_v0.2`）を登録して切り替える方針（v0.1 は書き換えない）。
