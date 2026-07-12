@@ -16,6 +16,7 @@ from hareskip.manual_skip import (
     parse_manual_steps,
     validate_manual_steps,
 )
+from hareskip.state import STATE
 
 
 # --- parse_manual_steps: normal cases ---------------------------------------
@@ -130,3 +131,25 @@ def test_validate_num_steps_tracks_argument():
     validate_manual_steps([40], 40)
     with pytest.raises(ManualSkipError):
         validate_manual_steps([40], 20)
+
+
+# --- reset_generation lifecycle: Manual Skip list survives ------------------
+#
+# reset_generation runs per sampling pass (process_before_every_sampling ->
+# _begin_generation -> reset_generation), AFTER before_process has validated
+# and stored the Manual Skip list. It must NOT wipe manual_skip_parsed, or the
+# patcher reads an empty list and Manual Skip silently disables (regression
+# fixed 2026-07-13). The raw manual_skip_steps text (a config-style field set
+# from UI args) must likewise survive.
+
+
+def test_reset_generation_preserves_manual_skip_parsed():
+    STATE.manual_skip_parsed = [10, 12]
+    STATE.reset_generation("test")
+    assert STATE.manual_skip_parsed == [10, 12]
+
+
+def test_reset_generation_preserves_manual_skip_steps():
+    STATE.manual_skip_steps = "10, 12"
+    STATE.reset_generation("test")
+    assert STATE.manual_skip_steps == "10, 12"

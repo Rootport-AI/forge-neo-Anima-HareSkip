@@ -530,7 +530,13 @@ class RuntimeState:
         self.hareskip_schedule_t_now = None
         self.hareskip_pattern = None
         self.hareskip_schedule_warned = False
-        self.manual_skip_parsed = None
+        # NOTE: manual_skip_parsed is deliberately NOT reset here. It is
+        # validated once per job in _prepare_manual_skip_run (before_process),
+        # which always clears + revalidates + restores it, so no stale value can
+        # cross a job boundary. Clearing it here (per-generation, i.e. per
+        # sampling pass) would wipe the validated list before the patcher reads
+        # it, disabling Manual Skip entirely (bug fixed 2026-07-13). Config-style
+        # fields (e.g. skip seed offset) are likewise not reset here.
         self.tensor_dump_run_dir = None
         self.tensor_dump_initialized = False
         self.tensor_dump_records = 0
