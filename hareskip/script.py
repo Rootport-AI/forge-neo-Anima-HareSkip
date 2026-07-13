@@ -1201,6 +1201,20 @@ def _apply_manual_skip_infotext(p) -> None:
         params = _extra_generation_params(p)
         realized = sorted({int(step) + 1 for step in STATE.hareskip_skipped_steps})
         params["Manual skipped_steps"] = " ".join(str(step) for step in realized)
+
+        rows = getattr(p, "_hareskip_manual_rows", None)
+        if rows:
+            row_index = getattr(p, "_hareskip_manual_logged_row_index", None)
+            if row_index is None:
+                row_index = 0
+            row_count = len(rows)
+        else:
+            row_index = 0
+            row_count = 1
+        info(
+            "manual_skip_realized "
+            f"index={row_index + 1}/{row_count} steps={realized}"
+        )
     except Exception as exc:
         warning(f"manual_skip_metadata_failed reason={exc}")
 
