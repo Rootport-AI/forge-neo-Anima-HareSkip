@@ -113,3 +113,59 @@ def validate_manual_steps(steps: list[int], num_steps: int) -> None:
                 f"Step {step} is out of range: this generation has "
                 f"{max_step} step(s). Specify steps between 2 and {max_step}."
             )
+
+
+def parse_manual_lines(text: str) -> list[tuple[int, list[int]]]:
+    """Parse a multiline Manual Skip input: one non-blank line = one job.
+
+    Each non-blank line is a comma-separated skip list with the SAME grammar as
+    a single ``parse_manual_steps`` input (§10.2). Line splitting happens FIRST,
+    before per-line parsing, so a multiline paste never collapses into one
+    comma-separated list (the trailing-comma silent-merge hazard, §10.2). Blank
+    and whitespace-only lines are ignored (they do not produce a job).
+
+    Returns a list of ``(physical_line_no, steps)`` tuples where
+    ``physical_line_no`` is the 1-based line number as it appears in the
+    textbox (blank lines are counted, so the number matches what the user
+    sees). ``text is None`` and empty / all-blank input yield ``[]``.
+
+    Raises ``ManualSkipError`` for any line containing a non-numeric token; the
+    message is prefixed with ``Line {physical_line_no}:`` so the offending line
+    is named. Range checks (step < 1, step == 1, step > num_steps) are NOT done
+    here — see ``validate_manual_lines``.
+    """
+    if text is None:
+        return []
+    parsed: list[tuple[int, list[int]]] = []
+    for index, raw_line in enumerate(str(text).split("\n")):
+        physical_line_no = index + 1
+        if not raw_line.strip():
+            continue
+        try:
+            steps = parse_manual_steps(raw_line)
+        except ManualSkipError as exc:
+            raise ManualSkipError(f"Line {physical_line_no}: {exc}")
+        parsed.append((physical_line_no, steps))
+    return parsed
+
+
+def validate_manual_lines(
+    parsed: list[tuple[int, list[int]]], num_steps: int
+) -> None:
+    """Validate every parsed Manual Skip line against the run's step count.
+
+    ``parsed`` is the output of ``parse_manual_lines`` — a list of
+    ``(physical_line_no, steps)`` tuples. Each line's ``steps`` is validated
+    with the existing ``validate_manual_steps``; any failure is re-raised with a
+    ``Line {physical_line_no}:`` prefix so the offending line is named.
+
+    Raises on the FIRST invalid line (mirrors the Auto Tea CSV parser, which
+    raises on the first bad row). Because validation runs in ``before_process``
+    before generation starts, a single bad line aborts the whole job — no
+    partial execution (§10.2). Returns ``None`` on success.
+    """
+    for physical_line_no, steps in parsed:
+        try:
+            validate_manual_steps(steps, num_steps)
+        except ManualSkipError as exc:
+            raise ManualSkipError(f"Line {physical_line_no}: {exc}")

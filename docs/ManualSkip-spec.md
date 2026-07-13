@@ -131,9 +131,9 @@ Manual Skip モード専用の infotext キーは最小限の2つのみとする
 
 ---
 
-## 10. 複数行化（v2、2026-07-13 設計確定・未実装）
+## 10. 複数行化（v2、2026-07-13 設計確定・実装済み）
 
-**実装ステータス: 未実装（次セッションで実装予定）。** 本節は 2026-07-13 にユーザー承認された確定設計であり、実装はそのまま着手可能な粒度で記述する。
+**実装ステータス: 実装済み（2026-07-13）。** 本節は 2026-07-13 にユーザー承認された確定設計であり、実装済み。パーサ層は `hareskip/manual_skip.py` の `parse_manual_lines` / `validate_manual_lines`、本体フックは `hareskip/script.py`（`_prepare_manual_skip_run` / `_apply_manual_skip_seed_template` / `_apply_manual_skip_row_if_needed` / `_finish_manual_skip_run`）、テストは `tests/test_manual_skip.py`。実機での挙動確認（3行1クリック生成・全行同一シード・後方互換・行番号つきエラー）は次回の実機セッションで行う。
 
 ### 10.1 背景・動機
 
@@ -188,7 +188,7 @@ if not STATE.active(): ...
 start_sampling(source)                   # script.py:827 — STATE.reset_generation() を呼ぶ
 ```
 
-つまり **`_apply_auto_teacache_row_if_needed` は `start_sampling`/`reset_generation` より前**に呼ばれている。`_apply_auto_teacache_row_if_needed`（`hareskip/script.py:674-704`）の機構: `iteration = _current_auto_teacache_iteration(p)` を求め、`row_index = iteration // original_n_iter` でその回に適用すべき行を選び、`apply_auto_teacache_row_to_state(row)` で `STATE` へ反映する。
+つまり **`_apply_auto_teacache_row_if_needed` は `start_sampling`/`reset_generation` より前**に呼ばれている。`_apply_auto_teacache_row_if_needed`（`hareskip/script.py:674-704`）の機構: `iteration = _current_generation_iteration(p)`（v2 でリネーム）を求め、`row_index = iteration // original_n_iter` でその回に適用すべき行を選び、`apply_auto_teacache_row_to_state(row)` で `STATE` へ反映する。
 
 Manual Skip v2 はこの構造をミラーするが、**適用箇所を `start_sampling`/`reset_generation` の「後」に置く**（Auto Tea とは順序が逆）。理由: `reset_generation`（`hareskip/state.py:505-556`）は `manual_skip_parsed` を意図的にクリアしない（§8.5 相当の NOTE コメント、`hareskip/state.py:533-539`「NOTE: manual_skip_parsed is deliberately NOT reset here...」）。この非クリアは「`before_process` で検証・格納した値がパッチャに読まれる前に消えるバグ」（`6dee42e`、§9 参照）の再発防止だが、v2 では**行ごとに異なる値をパスごとに再代入する必要がある**ため、`reset_generation` の非クリア方針とは別の理由で「`reset_generation` の後」に代入フックを置く必要がある:
 
@@ -207,13 +207,15 @@ _apply_manual_skip_row_if_needed(p)      # ← ここ（reset_generation の後�
 
 ```
 rows = getattr(p, "_hareskip_manual_rows", None)
-if not rows or STATE.hareskip_mode != MODE_MANUAL:
+if not rows or STATE.hareskip_mode != MODE_MANUAL or not STATE.hareskip_enabled:
     return
 original_n_iter = getattr(p, "_hareskip_manual_original_n_iter", 1)
-iteration = _current_auto_teacache_iteration(p)  # 同じ iteration カウンタを再利用可能か要実装検証。専用カウンタでも可
+iteration = _current_generation_iteration(p)  # Auto Tea と共通の iteration ヘルパを再利用
 row_index = max(0, min(len(rows) - 1, iteration // original_n_iter))
 STATE.manual_skip_parsed = rows[row_index]
 ```
+
+**実装確定（2026-07-13）**: iteration カウンタは Auto Tea 専用の `_current_auto_teacache_iteration` を共通名 `_current_generation_iteration` にリネームして再利用した（フォールバック属性も `_hareskip_iteration_counter` に一般化）。専用カウンタは不要である — 通常経路は `p.iteration` の副作用なし読み取りのみで、Auto Tea / Manual の両モードは `hareskip_mode` により排他ゲートされるため同一 run で両フックが同時に走ることはなく、フォールバック増分の競合も起きない。実装フックのガードには（Auto Tea 同型 676 行と整合させ）`not STATE.hareskip_enabled` も追加した（上記擬似コードに反映済み）。また `p` は Forge が使い回すため、`postprocess` で `_finish_manual_skip_run(p)` を呼び Manual の p-attribute 群（`_MANUAL_HARESKIP_P_ATTRS`）を後始末する — `seed_template_ready` 等が残留すると次回 run で二重適用事故になるため必須。
 
 この設計が `reset_generation` の非クリア方針と両立する理由を明記する: **`reset_generation` はパス単位（サンプリングパスごと）に呼ばれるが、`manual_skip_parsed` をクリアしない設計は「クリアしてから誰も再設定しない」事故を防ぐためのものであり、「同じフック内で reset の直後に再代入する」こと自体は禁止していない**。v2 のフックは `reset_generation` 呼び出しと同じ `_begin_generation` 内で、その直後に `STATE.manual_skip_parsed` を明示的に上書きするため、非クリア方針の意図（値を持ち主なくクリアしない）に反しない。また単一行入力（v1 互換）でも、1行だけの `rows` リストに対して `row_index` は常に `0` になるため、毎パス同じ値が再代入されるだけで v1 と挙動は完全に一致する。
 
@@ -267,14 +269,18 @@ v2 での変更点:
 `hareskip/manual_skip.py` に純関数を新設する:
 
 ```python
-def parse_manual_lines(text: str) -> list[list[int]]:
-    """Split text into non-blank lines, parse each with parse_manual_steps."""
+def parse_manual_lines(text: str) -> list[tuple[int, list[int]]]:
+    """Split text into non-blank lines, parse each with parse_manual_steps.
+
+    Returns (physical_line_no, steps) tuples; physical_line_no is 1-based.
+    """
 ```
 
 仕様:
 
 - `text` をまず改行 `\n` で分割する（§10.2「行分割を各行のパースより先に行う」、trailing-comma silent-merge hazard 対策）。
-- 空行・空白のみの行は無視する（リストに含めない、§10.2 の要件）。
+- 空行・空白のみの行は無視する（リストに含めない、§10.2 の要件）。ただし物理行番号のカウントには含める（空行を挟んでもエラーメッセージの行番号がテキストボックスの見た目と一致する）。
 - 各行に既存の `parse_manual_steps`（`hareskip/manual_skip.py:46-74`）をそのまま適用する。1行の文法は変更しない。
-- 検証は既存の `validate_manual_steps`（`hareskip/manual_skip.py:77-115`）を行ごとに呼び出す形にする。エラーメッセージに1-basedの行番号を含める（例: `f"Line {line_no}: {inner_message}"`）。
+- 戻り値は `(物理行番号(1-based), steps)` のタプルのリスト。物理行番号を steps と一緒に保持するのは、後段の `validate_manual_lines` がエラーメッセージで不正行を名指しするため。
+- 検証は新設の `validate_manual_lines(parsed, num_steps)` が既存の `validate_manual_steps`（`hareskip/manual_skip.py:77-115`）を行ごとに呼び出す形にする。パース・検証いずれのエラーメッセージにも1-basedの**物理行番号**を含める（例: `f"Line {physical_line_no}: {inner_message}"`）。
 - Forge/gradio/torch に依存しない stdlib のみの実装とし、`tests/test_manual_skip.py` から単体テスト可能にする（既存の `parse_manual_steps`/`validate_manual_steps` と同じテスト容易性を踏襲）。

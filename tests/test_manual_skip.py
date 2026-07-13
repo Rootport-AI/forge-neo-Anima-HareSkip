@@ -13,7 +13,9 @@ import pytest
 
 from hareskip.manual_skip import (
     ManualSkipError,
+    parse_manual_lines,
     parse_manual_steps,
+    validate_manual_lines,
     validate_manual_steps,
 )
 from hareskip.state import STATE
@@ -153,3 +155,106 @@ def test_reset_generation_preserves_manual_skip_steps():
     STATE.manual_skip_steps = "10, 12"
     STATE.reset_generation("test")
     assert STATE.manual_skip_steps == "10, 12"
+
+
+# --- parse_manual_lines: normal cases ---------------------------------------
+#
+# Multiline input: one non-blank line = one job. Line splitting happens first
+# (before per-line parsing), and each line is parsed with the single-line
+# grammar. Returns (physical_line_no, steps) tuples with 1-based physical line
+# numbers (blank lines counted, so the number matches the textbox).
+
+
+def test_parse_lines_empty_string():
+    assert parse_manual_lines("") == []
+
+
+def test_parse_lines_whitespace_only():
+    assert parse_manual_lines("   \n  \n\t") == []
+
+
+def test_parse_lines_none():
+    assert parse_manual_lines(None) == []
+
+
+def test_parse_lines_single_line():
+    assert parse_manual_lines("10, 12") == [(1, [10, 12])]
+
+
+def test_parse_lines_multiple_lines():
+    assert parse_manual_lines("10, 12\n15, 17, 19") == [
+        (1, [10, 12]),
+        (2, [15, 17, 19]),
+    ]
+
+
+def test_parse_lines_blank_lines_ignored():
+    # Blank / whitespace-only lines produce no job but still advance the
+    # physical line counter.
+    assert parse_manual_lines("10\n\n  \n15") == [(1, [10]), (4, [15])]
+
+
+def test_parse_lines_trailing_newline_no_extra_job():
+    assert parse_manual_lines("10\n12\n") == [(1, [10]), (2, [12])]
+
+
+def test_parse_lines_no_silent_merge_across_lines():
+    # A trailing comma on one line must NOT merge into the next line's list
+    # (the trailing-comma silent-merge hazard). Each line stays independent.
+    assert parse_manual_lines("10, 12,\n15") == [(1, [10, 12]), (2, [15])]
+
+
+def test_parse_lines_per_line_dedup_and_sort():
+    assert parse_manual_lines("12, 10, 12\n30, 2, 15") == [
+        (1, [10, 12]),
+        (2, [2, 15, 30]),
+    ]
+
+
+# --- parse_manual_lines: error cases ----------------------------------------
+
+
+def test_parse_lines_non_numeric_names_line():
+    with pytest.raises(ManualSkipError) as excinfo:
+        parse_manual_lines("10, 12\nfoo")
+    assert "Line 2" in str(excinfo.value)
+
+
+def test_parse_lines_error_uses_physical_line_number():
+    # Blank lines are counted: the offending line is physical line 3.
+    with pytest.raises(ManualSkipError) as excinfo:
+        parse_manual_lines("10\n\nfoo")
+    assert "Line 3" in str(excinfo.value)
+
+
+# --- validate_manual_lines --------------------------------------------------
+
+
+def test_validate_lines_all_valid():
+    validate_manual_lines([(1, [2, 10]), (2, [30])], 30)
+
+
+def test_validate_lines_empty_list_ok():
+    validate_manual_lines([], 30)
+
+
+def test_validate_lines_bad_line_named():
+    with pytest.raises(ManualSkipError) as excinfo:
+        validate_manual_lines([(1, [2, 10]), (5, [31])], 30)
+    assert "Line 5" in str(excinfo.value)
+
+
+def test_validate_lines_boundary_ok():
+    validate_manual_lines([(1, [30])], 30)
+
+
+def test_validate_lines_boundary_over_raises():
+    with pytest.raises(ManualSkipError) as excinfo:
+        validate_manual_lines([(1, [31])], 30)
+    assert "Line 1" in str(excinfo.value)
+
+
+def test_validate_lines_step_one_detected():
+    with pytest.raises(ManualSkipError) as excinfo:
+        validate_manual_lines([(1, [2]), (2, [1])], 30)
+    assert "Line 2" in str(excinfo.value)

@@ -26,7 +26,13 @@ from .constants import (
     MODE_MANUAL,
     MODE_TEACACHE,
 )
-from .manual_skip import ManualSkipError, parse_manual_steps, validate_manual_steps
+from .manual_skip import (
+    ManualSkipError,
+    parse_manual_lines,
+    parse_manual_steps,
+    validate_manual_lines,
+    validate_manual_steps,
+)
 from .diagnostics import log_generation_start, log_timing_summary
 from .logging import error, exception, info, warning
 from .model_detect import detect_model
@@ -268,9 +274,8 @@ class Script(scripts.Script):
             with gr.Group(visible=False) as manual_mode_group:
                 manual_skip_steps = gr.Textbox(
                     label="Manual skip steps",
-                    lines=1,
-                    max_lines=1,
-                    placeholder="e.g. 10, 12",
+                    lines=6,
+                    placeholder="e.g.\n10, 12\n15, 17, 19",
                     elem_id="manual-skip-steps",
                 )
 
@@ -517,6 +522,12 @@ class Script(scripts.Script):
             STATE.set_error(f"auto tea seed setup failed: {exc}")
             exception("auto tea seed setup failed")
             raise
+        try:
+            _apply_manual_skip_seed_template(p)
+        except Exception as exc:
+            STATE.set_error(f"manual skip seed setup failed: {exc}")
+            exception("manual skip seed setup failed")
+            raise
 
     def process_before_every_sampling(self, p, *script_args, **kwargs):
         try:
@@ -560,6 +571,7 @@ class Script(scripts.Script):
             STATE.calibration_capture_errors += 1
             warning(f"calibration_capture_summary_failed reason={exc}")
         _finish_auto_teacache_run(p)
+        _finish_manual_skip_run(p)
 
 
 _AUTO_HARESKIP_P_ATTRS = (
@@ -569,7 +581,18 @@ _AUTO_HARESKIP_P_ATTRS = (
     "_hareskip_auto_seed_template_size",
     "_hareskip_auto_seed_template_ready",
     "_hareskip_auto_logged_row_index",
-    "_hareskip_auto_iteration_counter",
+    "_hareskip_iteration_counter",
+)
+
+
+_MANUAL_HARESKIP_P_ATTRS = (
+    "_hareskip_manual_rows",
+    "_hareskip_manual_original_n_iter",
+    "_hareskip_manual_original_batch_size",
+    "_hareskip_manual_seed_template_size",
+    "_hareskip_manual_seed_template_ready",
+    "_hareskip_manual_logged_row_index",
+    "_hareskip_iteration_counter",
 )
 
 
@@ -583,7 +606,11 @@ def _prepare_auto_teacache_run(p, script_args) -> None:
     STATE.auto_teacache_original_n_iter = 1
     STATE.auto_teacache_parse_error = None
 
-    if not (STATE.enabled and STATE.auto_teacache_enabled):
+    if not (
+        STATE.enabled
+        and STATE.auto_teacache_enabled
+        and STATE.hareskip_mode == MODE_TEACACHE
+    ):
         return
 
     result = parse_auto_teacache_csv(STATE.auto_teacache_csv)
@@ -612,21 +639,60 @@ def _prepare_auto_teacache_run(p, script_args) -> None:
 
 
 def _prepare_manual_skip_run(p) -> None:
-    """Parse + validate the Manual Skip step list against the run's p.steps.
+    """Parse + validate the multiline Manual Skip input against the run's p.steps.
 
     No-op unless HareSkip is enabled and the Manual Skip mode is selected.
-    On success stores the validated 1-based list on STATE.manual_skip_parsed
-    (the patcher reads it); leaves it None otherwise. Raises ManualSkipError
-    on invalid input, which before_process turns into a RuntimeError.
+    Each non-blank line is one job (§10.2): all lines are parsed and validated
+    up front, then the job is expanded by multiplying ``p.n_iter`` by the line
+    count (mirroring Auto Tea's row expansion). All lines share one seed
+    template. On success stores the first line's validated 1-based list on
+    STATE.manual_skip_parsed (per-pass row selection in
+    ``_apply_manual_skip_row_if_needed`` then rewrites it for each subsequent
+    line); leaves it None / [] otherwise. Raises ManualSkipError on invalid
+    input, which before_process turns into a RuntimeError.
     """
     STATE.manual_skip_parsed = None
+    _clear_manual_skip_p_attrs(p)
     if not (STATE.enabled and STATE.hareskip_mode == MODE_MANUAL):
         return
-    steps = parse_manual_steps(STATE.manual_skip_steps)
+
+    parsed = parse_manual_lines(STATE.manual_skip_steps)
     num_steps = _positive_int(getattr(p, "steps", 0), 0)
-    validate_manual_steps(steps, num_steps)
-    STATE.manual_skip_parsed = steps
-    info(f"manual_skip_prepare steps={steps} num_steps={num_steps}")
+    validate_manual_lines(parsed, num_steps)
+
+    rows = [steps for _line_no, steps in parsed]
+    if not rows:
+        # Empty input / all-blank lines: no expansion, baseline behaviour that
+        # matches v1 (skip nothing, single job). manual_skip_parsed stays [].
+        STATE.manual_skip_parsed = []
+        info(f"manual_skip_prepare rows=0 num_steps={num_steps}")
+        return
+
+    # Defensive double-expansion guard (§10.x.4-3): if Auto Tea has already
+    # expanded p.n_iter, fail-stop rather than compound both expansions.
+    if getattr(p, "_hareskip_auto_rows", None):
+        raise RuntimeError(
+            "Manual Skip and Auto Tea both tried to expand n_iter for the same "
+            "run; refusing to run. Disable Auto Tea mode or switch skip mode."
+        )
+
+    original_n_iter = _positive_int(getattr(p, "n_iter", 1), 1)
+    batch_size = _positive_int(getattr(p, "batch_size", 1), 1)
+    total_n_iter = len(rows) * original_n_iter
+
+    setattr(p, "_hareskip_manual_rows", rows)
+    setattr(p, "_hareskip_manual_original_n_iter", original_n_iter)
+    setattr(p, "_hareskip_manual_original_batch_size", batch_size)
+    setattr(p, "n_iter", total_n_iter)
+
+    STATE.manual_skip_parsed = rows[0]
+
+    info(
+        "manual_skip_prepare "
+        f"rows={len(rows)} original_n_iter={original_n_iter} "
+        f"batch_size={batch_size} total_n_iter={total_n_iter} "
+        f"num_steps={num_steps}"
+    )
 
 
 def _apply_auto_teacache_seed_template(p) -> None:
@@ -671,6 +737,85 @@ def _apply_auto_teacache_seed_template(p) -> None:
         )
 
 
+def _apply_manual_skip_seed_template(p) -> None:
+    """Give every Manual Skip line the SAME seed template (§10.x.3, fixed).
+
+    Mirror of ``_apply_auto_teacache_seed_template``: builds a seed template of
+    ``original_n_iter * batch_size`` (batch_size included so line boundaries
+    never fall mid-template and shift seeds) and repeats it once per line, so
+    each pattern is compared under identical seeds. Not user-configurable.
+    """
+    rows = getattr(p, "_hareskip_manual_rows", None)
+    if not rows:
+        return
+
+    row_count = len(rows)
+    original_n_iter = _positive_int(
+        getattr(p, "_hareskip_manual_original_n_iter", 1),
+        1,
+    )
+    batch_size = _positive_int(getattr(p, "batch_size", 1), 1)
+    template_size = original_n_iter * batch_size
+    setattr(p, "_hareskip_manual_seed_template_size", template_size)
+
+    raw_seed_values = getattr(p, "all_seeds", None)
+    if not raw_seed_values and _safe_int(getattr(p, "seed", -1), -1) < 0:
+        return
+
+    was_ready = bool(getattr(p, "_hareskip_manual_seed_template_ready", False))
+    seed_template = _seed_template(
+        raw_seed_values,
+        getattr(p, "seed", 0),
+        template_size,
+    )
+    setattr(p, "all_seeds", seed_template * row_count)
+
+    if hasattr(p, "all_subseeds"):
+        subseed_template = _seed_template(
+            getattr(p, "all_subseeds", None),
+            getattr(p, "subseed", 0),
+            template_size,
+        )
+        setattr(p, "all_subseeds", subseed_template * row_count)
+
+    setattr(p, "_hareskip_manual_seed_template_ready", True)
+    if not was_ready:
+        info(
+            "manual_skip_seed_template "
+            f"rows={row_count} template_size={template_size} seeds={_seed_label(seed_template)}"
+        )
+
+
+def _apply_manual_skip_row_if_needed(p) -> None:
+    """Assign this pass's Manual Skip line to STATE.manual_skip_parsed.
+
+    Mirror of ``_apply_auto_teacache_row_if_needed``, but called AFTER
+    ``start_sampling`` / ``reset_generation`` (§10.x.2): each sampling pass must
+    re-select its line because ``reset_generation`` runs per pass and the value
+    otherwise carries over from the previous line. Single-line input always
+    resolves to ``rows[0]``, so v1 behaviour is preserved exactly.
+    """
+    rows = getattr(p, "_hareskip_manual_rows", None)
+    if not rows or STATE.hareskip_mode != MODE_MANUAL or not STATE.hareskip_enabled:
+        return
+
+    original_n_iter = _positive_int(
+        getattr(p, "_hareskip_manual_original_n_iter", 1),
+        1,
+    )
+    iteration = _current_generation_iteration(p)
+    row_index = max(0, min(len(rows) - 1, iteration // original_n_iter))
+    STATE.manual_skip_parsed = rows[row_index]
+
+    logged_row_index = getattr(p, "_hareskip_manual_logged_row_index", None)
+    if logged_row_index != row_index:
+        setattr(p, "_hareskip_manual_logged_row_index", row_index)
+        info(
+            "manual_skip_row_start "
+            f"index={row_index + 1}/{len(rows)} steps={rows[row_index]}"
+        )
+
+
 def _apply_auto_teacache_row_if_needed(p) -> None:
     rows = getattr(p, "_hareskip_auto_rows", None)
     if not rows or not STATE.auto_teacache_active or not STATE.hareskip_enabled:
@@ -680,7 +825,7 @@ def _apply_auto_teacache_row_if_needed(p) -> None:
         getattr(p, "_hareskip_auto_original_n_iter", 1),
         1,
     )
-    iteration = _current_auto_teacache_iteration(p)
+    iteration = _current_generation_iteration(p)
     row_index = max(0, min(len(rows) - 1, iteration // original_n_iter))
     repeat_index = (iteration % original_n_iter) + 1
     row = rows[row_index]
@@ -722,15 +867,28 @@ def _clear_auto_teacache_p_attrs(p) -> None:
             setattr(p, attr, None)
 
 
-def _current_auto_teacache_iteration(p) -> int:
+def _finish_manual_skip_run(p) -> None:
+    _clear_manual_skip_p_attrs(p)
+
+
+def _clear_manual_skip_p_attrs(p) -> None:
+    for attr in _MANUAL_HARESKIP_P_ATTRS:
+        try:
+            if hasattr(p, attr):
+                delattr(p, attr)
+        except Exception:
+            setattr(p, attr, None)
+
+
+def _current_generation_iteration(p) -> int:
     value = getattr(p, "iteration", None)
     if value is not None:
         try:
             return max(0, int(value))
         except Exception:
             pass
-    counter = _positive_int(getattr(p, "_hareskip_auto_iteration_counter", 0), 0)
-    setattr(p, "_hareskip_auto_iteration_counter", counter + 1)
+    counter = _positive_int(getattr(p, "_hareskip_iteration_counter", 0), 0)
+    setattr(p, "_hareskip_iteration_counter", counter + 1)
     return counter
 
 
@@ -820,11 +978,16 @@ def _begin_generation(p, script_args, source: str) -> None:
     _apply_ui_args(script_args)
     _apply_auto_teacache_seed_template(p)
     _apply_auto_teacache_row_if_needed(p)
+    _apply_manual_skip_seed_template(p)
     if not STATE.active():
         _remove_generation_patches()
         return
 
     start_sampling(source)
+    # MUST run after start_sampling: start_sampling -> reset_generation runs per
+    # pass and manual_skip_parsed must be re-selected for THIS pass's line
+    # (§10.x.2).
+    _apply_manual_skip_row_if_needed(p)
     _capture_hareskip_image_seed(p)
     try:
         STATE.generation_steps = int(getattr(p, "steps", 0) or 0) or None
