@@ -102,6 +102,8 @@ Forge Neo + Anima + GPU の検証マシンで、git pull → 正規手順で拡�
 
 ## 4.5 再キャリブレーション実験計画（2026-07-10ブレインストーム決定）
 
+> **移管注記（2026-07-13）**: 実験計画の正典は [`../../experiment-HareSkip/EXPERIMENT-PLAN.md`](../../experiment-HareSkip/EXPERIMENT-PLAN.md)（リポジトリ外・同親階層の実験ディレクトリ）に移管した。本節は移管時点の歴史的記録であり今後更新しない。
+
 ### 背景（短く）
 
 - 現行 `sigmoid_band_v0.1` の立ち下がり側（taper: `z_exit`/`tau_exit`）は UjiCache 実験の偏ったデータ由来。立ち上がり側（序盤が危険）はバイアス非依存の証拠（step2/4 critical、prompt-seed マッチ済み）で支持される。
