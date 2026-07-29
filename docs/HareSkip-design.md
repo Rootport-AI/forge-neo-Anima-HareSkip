@@ -2,6 +2,8 @@
 
 > Imported from the UjiCache pre-study archive (`stochastic_skip_density_design_2026-06-30.md`). Canonical design spec for the HareSkip skip-density mode. α implementation: see `hareskip/skip_pattern.py` and `hareskip/probability_models.py`.
 
+> **頭注（2026-07-29）**: 本書は研究アーカイブ（`stochastic_skip_density_design_2026-06-30`）の移入版であり、原典として凍結。実装との差異は `docs/SPEC-alpha.md` §4.3（4→3ゾーン変更）を、設計仮説の実測検証結果（z普遍性の限界・streak項不要・飽和など）は `docs/recalibration-2026-07/REPORT.md` を参照。
+
 作成日: 2026-06-30
 
 この文書は、UjiCache / TeaCache 系の skip step 判定を、固定 step pattern や TeaCache threshold ではなく、`logSNR / t_now` などの軌道座標上の **stochastic skip density** として設計・実装するためのハンドオフである。

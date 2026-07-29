@@ -164,7 +164,7 @@ p_skip(z; a) = p_cap
 
 実装は `skip_pattern.zone_from_z(z, boundaries=(low, high))` と `ZONE_MAX_STREAK`。`apply_max_streak_constraint(skip, z, p, zone_boundaries)` が境界を受け取る。run がゾーン跨ぎなら許容は run 内ゾーンの `min`（最保守）。境界の正規化（`[−8, 8]` クランプと `low ≤ high` の swap）は `apply_options` の責務。
 
-> **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
+> **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/archive/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
 
 ### 4.4 Skip window（旧ガード式を置換、α+1）
 
@@ -240,11 +240,13 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 設計書 [`docs/HareSkip-design.md`](HareSkip-design.md) の未決事項を参照:
 
 - step 間隔補正 `Δz`（不均一なステップ間隔への補正）。
-- ゾーン境界 / streak の条件依存化（sampler / scheduler / shift ごとの調整）。
+- ゾーン境界 / streak の条件依存化（sampler / scheduler / shift ごとの調整）。**2026-07-29 更新 — Shift依存化が必要と実証された**: Shift転移スポットチェック（ER SDE-Beta、z軸オーバーレイ分析、出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-29エントリ）により、中心仮説「損傷は z（logSNR）だけの関数」は素直には成立しないと判明した。Shift変換によるΔz（=2·ln(shift比)、Shift 3→1 で +2.1972）は全ステップ一様なオフセットとして解析的に説明できるが、それを補正してもなお**損傷カーブの急峻さ自体がShiftで変化する**: z<0（danger側）ではShift=1の損傷がShift=3カーブの中央値の1.3〜1.7倍、z>0（safe側）では0.3〜0.6倍にとどまる。skip軸（ステップ位置そのもの）で比較しても重ならないため、「z整列＋横ずらし」では吸収できない。実用方向の含意: **低Shiftで運用するほど序盤（danger側）の保護を強める方向の較正が安全**。ゾーン境界の単純な平行移動では不十分な可能性があり、Shift別のゾーン境界較正が今後の課題として残る。
 - `p_cap` / `z_enter` の較正手順の確立（実機での a → skip 数較正）。
 - 確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。
-- 再キャリブレーション実験計画は `docs/HANDOFF-next-session.md` §4.5 参照。
-- **Skip seed offset の Forge 準拠化**（2026-07-12 決定、未実装）: `offset=-1` をランダム扱いにする、サイコロ／リユースボタンの追加、`infotext_fields` 登録による PNG Info タブからの HareSkip 設定一式復元。詳細は `docs/HANDOFF-next-session.md` §4.6 参照。
-- **Manual Skip 複数行化**（2026-07-13 設計確定、未実装、次セッション最優先）: Manual skip steps テキストボックスを multiline 化し、空でない各行を1ジョブとして Auto Tea mode の展開機構で順次生成する。詳細は `docs/ManualSkip-spec.md` §10、`docs/HANDOFF-next-session.md` §1.5 参照。
+- **streak項について（2026-07-29 更新 — 予測式には不要と確定）**: 第3段階 out-of-sample 検証（凍結事前予測表と実測の照合、出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-29エントリ）で、streak項を加えた対照式はプールでΔρ=−0.049（事前登録基準の+0.02未満を満たさず）となり、**streak項は品質順位の予測式には不要と結論**した。第2段階 in-sample でEuler-Betaにのみ見えていた+0.046の改善は、out-of-sampleでは再現せず符号反転しており過学習と判明。ただし、ゾーン別 max skip streak 制約（§4.3・§4.5 の実装済みガード機構）は予測式とは別の役割（実行時の連続スキップ長そのものの制約）を持ち、第2段階の実測（アンカー幅の5〜15%の微小だが実在するペナルティ）に基づき維持する。
+- **probability_models 再較正について（2026-07-29 更新 — 較正に必要な実測データが揃った）**: 単発29位置×45条件（第1段階）、相互作用28パターン×45条件（第2段階）、out-of-sample 450点（第3段階）、±1ステップアンカー90点、いずれも固定コミット`b6164214`製の実測データが揃った（出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-27〜29の各エントリ）。予測式（単発損傷の和＋飽和リンク、調整項2個）は事前登録基準（プールSpearman ρ≥0.8）に対しρ=0.930で合格した。実装規律は従来どおり: `sigmoid_band_v0.1` は書き換えず、較正結果を反映する場合は新バージョン（例 `sigmoid_band_v0.2`）を `probability_models.py` レジストリに登録して切り替える（下記末尾の記述を参照）。
+- 再キャリブレーション実験計画は `docs/archive/HANDOFF-next-session.md` §4.5 参照（実験計画の正典は移管済み。§4.5 冒頭の移管注記のとおり `experiment-HareSkip/EXPERIMENT-PLAN.md` を参照。実験の総括は `docs/recalibration-2026-07/REPORT.md`）。
+- **Skip seed offset の Forge 準拠化**（2026-07-12 決定、未実装）: `offset=-1` をランダム扱いにする、サイコロ／リユースボタンの追加、`infotext_fields` 登録による PNG Info タブからの HareSkip 設定一式復元。詳細は `docs/skip-seed-offset-plan.md` 参照。
+- **Manual Skip 複数行化**（2026-07-13 設計確定、未実装、次セッション最優先）: Manual skip steps テキストボックスを multiline 化し、空でない各行を1ジョブとして Auto Tea mode の展開機構で順次生成する。詳細は `docs/ManualSkip-spec.md` §10、`docs/archive/HANDOFF-next-session.md` §1.5 参照。
 
-較正の実運用は §5-1 と `docs/HANDOFF-next-session.md` の「予想される修正ポイント」に従い、`probability_models.py` に新バージョン（例 `sigmoid_band_v0.2`）を登録して切り替える方針（v0.1 は書き換えない）。
+較正の実運用は §5-1 と `docs/archive/HANDOFF-next-session.md` の「予想される修正ポイント」に従い、`probability_models.py` に新バージョン（例 `sigmoid_band_v0.2`）を登録して切り替える方針（v0.1 は書き換えない）。

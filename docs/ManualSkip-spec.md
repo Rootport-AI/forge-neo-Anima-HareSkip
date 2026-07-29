@@ -4,7 +4,7 @@
 - 実装ステータス: 実装済み（2026-07-10）
 - 設計確定時 HEAD コミット: `03e0acc0d3cd12889c11bd34612558630956d69e`
 - 対象: HareSkip 拡張への追加モード「Manual Skip」（`hareskip/manual_skip.py` として実装済み）
-- 関連文書: [`docs/SPEC-alpha.md`](SPEC-alpha.md)（現行 α版仕様。UI構造・引数同期・infotext方式の正典）、[`docs/HANDOFF-next-session.md`](HANDOFF-next-session.md) §4.5（本機能が奉仕する再キャリブレーション実験計画）
+- 関連文書: [`docs/SPEC-alpha.md`](SPEC-alpha.md)（現行 α版仕様。UI構造・引数同期・infotext方式の正典）、[`docs/archive/HANDOFF-next-session.md`](archive/HANDOFF-next-session.md) §4.5（本機能が奉仕する再キャリブレーション実験計画）
 - **v2（複数行化）設計確定・未実装**: 2026-07-13。§10 参照。実装ステータスは v1（単一行、本書 §1-8 記載）とは独立に管理する——v1 は実装済みで実機検証済み（§9）、v2 は設計のみで未実装。
 
 本書は Manual Skip mode の要件定義・入力/検証/動作仕様・設計をまとめた確定仕様である。設計確定時のキー名・関数名は当時のリポジトリ実コード（`hareskip/*.py`, HEAD=`03e0acc`）に対して確認済み。**本機能は `a67f559`（2026-07-10）で実装済み**（`hareskip/manual_skip.py`, `tests/test_manual_skip.py`）であり、以下の §7 実装ガイド・§8 は設計確定時点の記述を保存した記録である。実装後の正典は実コードおよび `docs/SPEC-alpha.md`（3 点同期・infotext）を参照。
@@ -13,7 +13,7 @@
 
 ## 1. 目的・背景
 
-`docs/HANDOFF-next-session.md` §4.5 に記載の再キャリブレーション実験（`sigmoid_band_v0.1` の taper 側較正が現行データでは正当化できないため、新規データで再較正する計画）は、第1層「単発スキップ掃引」（30 ステップ中 1 ステップだけ飛ばすパターンを全30位置×45条件で測定し位置ごとの限界損傷曲線 `dQ(z)` を得る）と第2層「相互作用の抽出」（`{i}`, `{j}`, `{i,j}` の3点セットで隣接ペア=streak効果・帯域間相互作用を測る）から成る。どちらも「どのステップを飛ばすか」を実験者が数値で明示指定する必要があり、既存の HareSkip モード（確率的抽選）や TeaCache モード（accumulator 判定）では実現できない。Manual Skip mode はこの実験の実行手段として要求された。
+`docs/archive/HANDOFF-next-session.md` §4.5 に記載の再キャリブレーション実験（`sigmoid_band_v0.1` の taper 側較正が現行データでは正当化できないため、新規データで再較正する計画）は、第1段階「単発スキップ掃引」（30 ステップ中 1 ステップだけ飛ばすパターンを全30位置×45条件で測定し位置ごとの限界損傷曲線 `dQ(z)` を得る）と第2段階「相互作用の抽出」（`{i}`, `{j}`, `{i,j}` の3点セットで隣接ペア=streak効果・帯域間相互作用を測る）から成る。どちらも「どのステップを飛ばすか」を実験者が数値で明示指定する必要があり、既存の HareSkip モード（確率的抽選）や TeaCache モード（accumulator 判定）では実現できない。Manual Skip mode はこの実験の実行手段として要求された。
 
 当初案（Auto Hare mode）では、既存の Auto Tea mode（CSV 1行 = 1条件をキュー展開し、`n_iter` を行数倍に増やして順次適用する仕組み）を模倣し、CSV の行ごとに異なるスキップステップ集合を展開してバッチ生成する方式を検討した。しかし CSV パーサ・行展開・`n_iter` 書き換え・seed テンプレート整合など Auto Tea mode 側の複雑な既存機構をそのまま持ち込む設計は「複雑すぎる」としてユーザーに却下され、1回の生成につきスキップ集合を1つ指定する単純なテキストボックス入力に簡素化された。これが本仕様である。行展開・バッチ化が必要な場合は、生成を複数回叩く運用（または将来の別機能）でカバーする。却下されたのは**記法**（ヘッダ行・列ラベル・範囲記法）であり、行の逐次実行機構そのものは後に v2 として採用された（→ §10）。詳細は §10.3 参照。
 
@@ -38,7 +38,7 @@
 - 入力は「飛ばすステップの列挙」であり、位置指定記法（範囲 `a-b` やスライス記法等）ではない。1つずつ数値で書く。
 - 記載されなかったステップは自動的にフル演算される。ユーザーが「飛ばさないステップ」のために空欄やプレースホルダを置く必要は無い。
 - 入力欄が空文字列の場合は「何も飛ばさない」（全ステップフル演算）として有効に扱う。これはキャリブレーション実験における LPIPS 比較の基準画像（baseline）生成に使う正当なユースケースである。
-- スキップ可能なステップ数の上限はコードに焼き込まない。範囲検証は生成時の実際の `p.steps`（StableDiffusionProcessing のステップ数）に対して動的に行う。これにより 20〜40 steps 等、実験計画で使われる steps 数の変化に自動対応する。「30 steps」はキャリブレーション実験計画（`docs/HANDOFF-next-session.md` §4.5 第1層）側の話であり、本機能の仕様として steps 数を固定するものではない。
+- スキップ可能なステップ数の上限はコードに焼き込まない。範囲検証は生成時の実際の `p.steps`（StableDiffusionProcessing のステップ数）に対して動的に行う。これにより 20〜40 steps 等、実験計画で使われる steps 数の変化に自動対応する。「30 steps」はキャリブレーション実験計画（`docs/archive/HANDOFF-next-session.md` §4.5 第1段階）側の話であり、本機能の仕様として steps 数を固定するものではない。
 
 ---
 
@@ -133,11 +133,15 @@ Manual Skip モード専用の infotext キーは最小限の2つのみとする
 
 ## 10. 複数行化（v2、2026-07-13 設計確定・実装済み）
 
-**実装ステータス: 実装済み（2026-07-13）。** 本節は 2026-07-13 にユーザー承認された確定設計であり、実装済み。パーサ層は `hareskip/manual_skip.py` の `parse_manual_lines` / `validate_manual_lines`、本体フックは `hareskip/script.py`（`_prepare_manual_skip_run` / `_apply_manual_skip_seed_template` / `_apply_manual_skip_row_if_needed` / `_finish_manual_skip_run`）、テストは `tests/test_manual_skip.py`。実機での挙動確認（3行1クリック生成・全行同一シード・後方互換・行番号つきエラー）は次回の実機セッションで行う。
+**実装ステータス: 実装済み（2026-07-13）。実機検証: 完了（2026-07-13〜14）。** 本節は 2026-07-13 にユーザー承認された確定設計であり、実装済み。パーサ層は `hareskip/manual_skip.py` の `parse_manual_lines` / `validate_manual_lines`、本体フックは `hareskip/script.py`（`_prepare_manual_skip_run` / `_apply_manual_skip_seed_template` / `_apply_manual_skip_row_if_needed` / `_finish_manual_skip_run`）、テストは `tests/test_manual_skip.py`。
+
+**実機検証記録（2026-07-13〜14、出典 `experiment-HareSkip/EXPERIMENT-LOG.md`）**: 複数行機構（行展開・同一シード共有・per-pass 行差し替え・infotext 実現値）は実機（RTX 3080 Laptop、Anima baseV10、ER SDE / Beta / 30 steps / CFG 4 / 1536x1536）で検証完了した。3行スモークテスト（`10,11,12` / `14,15,16` / `18,19,20`）でコンソールログ上の行展開・全行同一シード（`manual_skip_seed_template`）・per-pass 行差し替え（`manual_skip_row_start` の index 1→2→3 遷移）を確認（2026-07-13）。翌日（2026-07-14）に2枚目画像の infotext `Manual skipped_steps: 14 15 16` を確認し、複数行機構の検証を完了。同日実施した不正行入力テスト（`Line N:` エラーによる fail-stop の検証）では、拡張自体は設計どおり `RuntimeError` を送出したが、Forge 本体側が例外を握り潰し生成を続行するという既知の制約が判明した（下記「既知の制約」参照）。
+
+さらに、2026-07-22〜29 の再キャリブレーション実験（第2段階・第3段階）では、Manual Skip 経路（Forge API 経由・1パターン=1リクエスト）が第2段階 1,260枚＋第3段階 450枚の計 1,700枚超の生成に使用され、いずれも完走した（固定コミット `b6164214` 製、infotext 全数検査で `Manual skipped_steps` の実現値がファイル名のスキップ集合と完全整合、出典 `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-27・07-29エントリ）。
 
 ### 10.1 背景・動機
 
-`docs/HANDOFF-next-session.md` §4.5 の第1層「単発スキップ掃引」実験（30 ステップ中1ステップだけ飛ばすパターンを全30位置にわたって測定）は、現行の Manual Skip（1回の生成につきスキップ集合1つ）では Generate ボタンを30回押す必要がある。複数行化により、この掃引を **1回の Generate クリック**で実行できるようにする。
+`docs/archive/HANDOFF-next-session.md` §4.5 の第1段階「単発スキップ掃引」実験（30 ステップ中1ステップだけ飛ばすパターンを全30位置にわたって測定）は、現行の Manual Skip（1回の生成につきスキップ集合1つ）では Generate ボタンを30回押す必要がある。複数行化により、この掃引を **1回の Generate クリック**で実行できるようにする。
 
 ### 10.2 要件
 

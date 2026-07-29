@@ -1,5 +1,9 @@
 # UjiCache Spec v1.4
 
+> This document applies to HareSkip's **TeaCache mode** (formerly UjiCache). Content below is unchanged from the original UjiCache-era note.
+>
+> Archived as historical material of the UjiCache-era spec — superseded as a live reference by [`docs/SPEC-alpha.md`](../SPEC-alpha.md), the current HareSkip specification.
+
 ## Overview
 
 `UjiCache` is a Forge Neo extension for residual reuse experiments in Anima / Cosmos-Predict2 inference.
