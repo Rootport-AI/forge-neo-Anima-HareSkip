@@ -10,8 +10,10 @@ which steps are eligible to be skipped; steps outside the window are forced
 full (``p = 0.0``, ``skip = False``). Skip decisions for eligible steps are
 drawn from a seeded RNG for reproducibility; a zone-based max-skip-streak
 constraint (3 zones: danger/middle/safe, with user-configurable boundaries)
-then trims runs deterministically. End-of-generation moderation is handled
-by the skip-probability taper (probability_models.py), not by a zone.
+then trims runs deterministically in a single left-to-right pass, applying
+each step's own zone limit to the running consecutive-skip counter
+(2026-08-03; see apply_max_streak_constraint). End-of-generation moderation
+is handled by the skip-probability taper (probability_models.py), not a zone.
 
 Skip window semantics (2026-07-10 user decision, WYSIWYG)
 ========================================================
@@ -123,51 +125,40 @@ class SkipPattern:
 def apply_max_streak_constraint(
     skip, z_by_step, p_by_step, zone_boundaries=DEFAULT_ZONE_BOUNDARIES
 ):
-    """Trim skip runs in place so no run exceeds its allowed streak.
+    """Trim skip runs in place so no step exceeds its own zone's streak.
 
-    Deterministic (no RNG). For each maximal run of consecutive skipped
-    steps, the allowed streak is the most conservative
-    ``ZONE_MAX_STREAK`` over the zones present in the run (zones classified
-    with ``zone_boundaries``). While a run is too long, flip the step with
-    the lowest ``(p, z, index)`` back to full and re-scan (a flip may split
-    a run into shorter sub-runs). Terminates because each flip strictly
-    reduces the number of skips.
+    Deterministic (no RNG), single left-to-right pass, ``skip`` is modified
+    in place. A running counter holds the number of consecutive skips
+    immediately preceding the current step. For each candidate step ``k``
+    (``skip[k]`` is True), the step's *own* zone
+    (``zone_from_z(z_by_step[k], zone_boundaries)``) supplies the limit: if
+    the counter has already reached ``ZONE_MAX_STREAK[zone]`` the step is
+    flipped back to full and the counter resets to 0; otherwise the skip is
+    kept and the counter increments. Steps that were already full reset the
+    counter to 0.
+
+    ``p_by_step`` is accepted for signature compatibility (and callers pass
+    it) but the per-step rule needs no tie-breaking, so it is unused.
+
+    2026-08-03: this replaces the former run-level rule, which applied the
+    *minimum* ``ZONE_MAX_STREAK`` over all zones present in a maximal run
+    and greedily flipped the ``(p, z, index)``-argmin step. At high skip
+    probability every step joined one run, so a single danger step imposed
+    streak 1 on the whole schedule and the skip count collapsed (3 skips at
+    p = 1.0 on the 30-step reference schedule, against 21 for the per-step
+    trim, or 19 under the default skip window). See docs/SPEC-alpha.md §4.5.
     """
-    while True:
-        # Find the first maximal run that violates its allowed streak.
-        n = len(skip)
-        i = 0
-        violated = None  # (start, end_exclusive, allowed)
-        while i < n:
-            if not skip[i]:
-                i += 1
-                continue
-            j = i
-            while j < n and skip[j]:
-                j += 1
-            # run is [i, j)
-            allowed = min(
-                ZONE_MAX_STREAK[zone_from_z(z_by_step[k], zone_boundaries)]
-                for k in range(i, j)
-            )
-            if (j - i) > allowed:
-                violated = (i, j, allowed)
-                break
-            i = j
-
-        if violated is None:
-            return
-
-        start, end, _allowed = violated
-        # argmin over the run by (p, z, index).
-        best = None
-        for k in range(start, end):
-            key = (p_by_step[k], z_by_step[k], k)
-            if best is None or key < best[0]:
-                best = (key, k)
-        skip[best[1]] = False
-        # Loop again: re-scan from scratch so newly created sub-runs are
-        # correctly re-evaluated.
+    counter = 0
+    for k in range(len(skip)):
+        if not skip[k]:
+            counter = 0
+            continue
+        allowed = ZONE_MAX_STREAK[zone_from_z(z_by_step[k], zone_boundaries)]
+        if counter >= allowed:
+            skip[k] = False
+            counter = 0
+        else:
+            counter += 1
 
 
 def _draw_pattern(t_now_by_step, params, skip_window, num_steps, model, rng):

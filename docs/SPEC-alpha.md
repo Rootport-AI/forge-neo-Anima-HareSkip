@@ -162,7 +162,7 @@ p_skip(z; a) = p_cap
 | middle | `low ≤ z < high`（既定 −4..0） | 2 |
 | safe | `z ≥ high`（既定 0） | 3 |
 
-実装は `skip_pattern.zone_from_z(z, boundaries=(low, high))` と `ZONE_MAX_STREAK`。`apply_max_streak_constraint(skip, z, p, zone_boundaries)` が境界を受け取る。run がゾーン跨ぎなら許容は run 内ゾーンの `min`（最保守）。境界の正規化（`[−8, 8]` クランプと `low ≤ high` の swap）は `apply_options` の責務。
+実装は `skip_pattern.zone_from_z(z, boundaries=(low, high))` と `ZONE_MAX_STREAK`。`apply_max_streak_constraint(skip, z, p, zone_boundaries)` が境界を受け取る。**上限は各ステップが自分のゾーンのものを使う**（run 単位の `min` ではない。2026-08-03 変更、§4.5 参照）。境界の正規化（`[−8, 8]` クランプと `low ≤ high` の swap）は `apply_options` の責務。
 
 > **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/archive/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
 
@@ -181,12 +181,14 @@ window 外のステップは強制フル（`p = 0.0`, `skip = False`）。既定
 
 ### 4.5 streak 刈り込みアルゴリズム（`apply_max_streak_constraint`）
 
-決定論的（RNG 不使用）。
+決定論的（RNG 不使用）。左→右の 1 パスで、`skip` を in place に書き換える。
 
-1. 先頭から最初の「許容 streak を超える run」を走査で発見。run 内の許容は各ゾーン `ZONE_MAX_STREAK` の `min`。
-2. その run 内で `(p, z, index)` が最小のステップをフルに戻す（p 最小 → tie は z 最小 → tie は index 最小）。
-3. run を**再計算**して先頭から再走査（フル化が run を短いサブ run に分割し得るため）。
-4. 違反 run が無くなるまで反復。各フル化でスキップ数が厳密に減るため必ず停止。
+1. 連続スキップ数のカウンタを 0 で始める。
+2. ステップ `k` を先頭から走査する。`skip[k]` が False なら（元からフルなので）カウンタを 0 に戻して次へ。
+3. `skip[k]` が True なら、**そのステップ自身のゾーン**の上限 `allowed = ZONE_MAX_STREAK[zone_from_z(z[k], boundaries)]` を取る。`counter >= allowed` ならそのステップをフル化（`skip[k] = False`）してカウンタを 0 に戻す。そうでなければスキップを維持してカウンタ +1。
+4. `p_by_step` はシグネチャ互換のため受け取るが、ステップ単位の規則にはタイブレークが不要なので未使用。
+
+> **2026-08-03 更新 — 塊単位 min 適用からステップ単位適用へ（ユーザー承認済み）**: 旧実装は「連続スキップの塊（run）ごとに、塊内ゾーンの `min` を許容 streak とし、`(p, z, index)` 最小のステップを 1 つずつフル化して再走査する」貪欲法だった。この規則は高確率域で破綻する: p が高いと全ステップが 1 つの run に融合し、その run が danger ステップを 1 つでも含むと許容が 1 に落ちて**スケジュール全域に danger 上限が適用される**。合成 30-step 降順スケジュールで全ステップ提案（p = 1.0 相当）した場合、刈り込み後のスキップ数は **3 本**まで崩壊した（ステップ単位で最適に刈れば 21 本）。aggressiveness を上げるほどスキップ数がむしろ減る非単調性を生み、v0.1 時代からの「a = 1.0 で目標 15 に届かない」問題の真因だった。新規則では各ステップが自分のゾーンの上限だけを見るため、danger ステップは自分の前後を短く切るだけで済み、崩壊が消える（同条件で 3 → 21 本、平坦 p 0.1〜1.0 の掃引で平均スキップ数が単調非減少になることを回帰テストで固定）。決定論・RNG 不使用・in place・関数シグネチャは従来どおり。影響範囲は HareSkip モードと exact-target の実現パターン（Manual Skip 経路は刈り込みを通らないため既存実験データの妥当性に影響なし）。`p_cap(a)` の再較正が必要。
 
 ### 4.6 skip_seed 導出
 
@@ -219,11 +221,11 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 ## 5. 既知の制約・α版の限界
 
 1. **aggressiveness → 実スキップ数の較正未実施（要注意・計画との差異あり）**: 純粋モジュールを合成 30-step 降順スケジュール（`t_now` 0.999→0.003 線形、`tests/test_skip_pattern.py` の `_t_now_schedule`）で実測すると、streak 刈り込み後のスキップ数は **seed 依存**で以下（`derive_skip_seed(0,0)` 使用時）:
-   - a=0.0 → 3 skips（`expected_skips_before_streak ≈ 6.8`）
-   - a=0.5 → 8 skips（`expected ≈ 13.2`）
-   - a=1.0 → 10 skips（`expected ≈ 20.1`）
+   - a=0.0 → 4 skips（`expected_skips_before_streak ≈ 6.8`）
+   - a=0.5 → 10 skips（`expected ≈ 13.2`）
+   - a=1.0 → 13 skips（`expected ≈ 20.1`）
 
-   別 seed では a=0.5 で 9〜10 skips になる。**計画書（`ok-cuddly-hamster.md`）の「合成 30step・a=0.5 で streak 刈り込み後 5skip」という記述は現行実装と一致しない**（§ 末尾の差異報告を参照）。設計目標（a=0.5 で約 10 skips、a=1.0 で約 15 skips）に対し、a=1.0 が目標を下回る傾向があり、`p_cap(a)` / `z_enter(a)` の実機較正が必要。
+   （2026-08-03 §4.5 の刈り込み修正後の実測値。修正前は同 seed で 3 / 8 / 10 skips だった。50 seed 平均では a=0.0 → 6.7、a=0.5 前後 → 11〜13、a=1.0 → 15.8 で、a に対して単調増加する。修正前は a=0.8 の 10.6 をピークに a=1.0 で 9.5 へ**下降**していた。）**計画書（`ok-cuddly-hamster.md`）の「合成 30step・a=0.5 で streak 刈り込み後 5skip」という記述は現行実装と一致しない**（§ 末尾の差異報告を参照）。設計目標（a=0.5 で約 10 skips、a=1.0 で約 15 skips）に対し、a=1.0 が目標を下回る傾向があり、`p_cap(a)` / `z_enter(a)` の実機較正が必要。
 
 2. **z 符号・スケジュール捕捉パスの実機未検証**: sigma→t 写像と z の増減方向は検証マシンで未確認。`sampling_schedule_t_now` の属性到達パスが実機で正しく解決されるかは要検証。失敗時はフル演算に劣化する設計なので安全側。
 

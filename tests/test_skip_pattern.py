@@ -193,6 +193,8 @@ def test_custom_zone_boundaries_change_streak_trimming():
     # A run of 3 skips at z=[0.5, 1.0, 1.5] is entirely "safe" under default
     # boundaries (high=0.0) -> allowed 3, untrimmed. Under boundaries with
     # high=2.0 those become "middle" -> allowed 2, so one is trimmed.
+    # (Unchanged by the 2026-08-03 per-step rule: single-zone runs behave
+    # identically, only the count of survivors is asserted.)
     skip = [True, True, True]
     z = [0.5, 1.0, 1.5]
     p = [0.30, 0.10, 0.20]
@@ -223,53 +225,58 @@ def test_derive_skip_seed_offset_differs():
 # --- streak constraint (synthetic) ------------------------------------------
 
 
-def test_streak_middle_run_trimmed_argmin_p():
-    # 4-long True run entirely in the middle zone (-4 <= z < 0).
-    # allowed = 2, so trim to <= 2. Lowest p is index 2.
+def test_streak_middle_run_trimmed_at_third_step():
+    # 4-long True run entirely in the middle zone (-4 <= z < 0), allowed 2.
+    # Expectation changed 2026-08-03: the per-step left-to-right rule breaks
+    # the run at the first step whose counter has already reached the limit
+    # (index 2), instead of at the argmin-p step -- which here happens to be
+    # the same index, so the result is unchanged; p no longer influences it.
     skip = [True, True, True, True]
     z = [-1.0, -1.5, -2.0, -0.5]
     p = [0.30, 0.20, 0.10, 0.40]
     sp.apply_max_streak_constraint(skip, z, p)
-    # Index 2 (lowest p) flipped first. After that run is [0,1] and [3],
-    # both <= 2, so only one flip.
     assert skip == [True, True, False, True]
-    # Verify no run exceeds allowed.
     _assert_streaks_ok(skip, z)
 
 
-def test_streak_tie_broken_by_lower_z_then_index():
-    # Equal p across a 4-run in middle zone: tie -> lower z, then lower idx.
+def test_streak_ignores_p_and_z_ordering():
+    # Expectation changed 2026-08-03: the old rule flipped the (p, z, index)
+    # argmin (index 1, the lowest z), giving [T, F, T, T]. The per-step rule
+    # has no tie-break at all -- position alone decides, so the middle-zone
+    # 4-run always breaks at index 2 regardless of p/z ordering.
     skip = [True, True, True, True]
     z = [-1.0, -3.0, -2.0, -0.5]  # lowest z is index 1
     p = [0.25, 0.25, 0.25, 0.25]
     sp.apply_max_streak_constraint(skip, z, p)
-    # First flip removes index 1 (lowest z). Now runs: [0] and [2,3] (len 2)
-    # -> both OK.
-    assert skip == [True, False, True, True]
+    assert skip == [True, True, False, True]
+    _assert_streaks_ok(skip, z)
 
 
-def test_streak_cross_zone_danger_middle_allowed_1():
-    # Run spans danger (z<-4) + middle -> allowed = min(1, 2) = 1 while the
-    # danger step is present. The danger step (lowest p) is flipped first;
-    # the remaining pure-middle run is then re-evaluated with allowed 2.
+def test_streak_cross_zone_danger_then_middle():
+    # Expectation changed 2026-08-03: the old run-level rule took the run
+    # minimum (min(1, 2) = 1) and flipped the danger step out, giving
+    # [F, T, T]. Under the per-step rule the danger step at index 0 starts
+    # the run with counter 0 < 1, so it is *kept*; the limit that bites is
+    # the middle limit 2 at index 2.
     skip = [True, True, True]
     z = [-5.0, -3.0, -2.0]  # danger, middle, middle
     p = [0.10, 0.30, 0.20]
     sp.apply_max_streak_constraint(skip, z, p)
-    # Danger step (index 0) removed; the middle pair is a valid length-2 run.
-    assert skip == [False, True, True]
+    assert skip == [True, True, False]
     _assert_streaks_ok(skip, z)
 
 
-def test_streak_cross_zone_danger_forces_break():
-    # A danger step embedded in a longer run must be broken: while any run
-    # contains the danger step, allowed is 1, so it gets flipped out.
+def test_streak_danger_step_after_a_skip_is_flipped():
+    # Expectation changed 2026-08-03: the old rule flipped the danger step
+    # because it was the argmin-p of the whole run. Under the per-step rule
+    # index 1 is flipped for a different reason -- it is a danger step
+    # (allowed 1) preceded by one skip, so its counter already equals its
+    # limit. Index 0 and the following middle pair survive.
     skip = [True, True, True, True]
     z = [-3.0, -5.0, -3.5, -2.0]  # middle, danger, middle, middle
-    # danger step has the lowest p so it is flipped, splitting the run.
     p = [0.40, 0.05, 0.30, 0.20]
     sp.apply_max_streak_constraint(skip, z, p)
-    assert skip[1] is False  # danger step removed
+    assert skip == [True, False, True, True]
     _assert_streaks_ok(skip, z)
 
 
@@ -297,6 +304,89 @@ def test_streak_safe_run_spanning_former_final_boundary():
         assert sp.zone_from_z(zi) == "safe"
 
 
+def test_streak_all_true_no_longer_collapses():
+    # Regression for the 2026-08-03 fix. Under the old run-level rule an
+    # all-True proposal on the 30-step reference schedule formed ONE run,
+    # whose minimum zone limit was danger's 1, so the whole schedule was
+    # trimmed to 3 skips. The per-step rule applies each step's own limit.
+    sched = _t_now_schedule(30)
+    z = [sp.logsnr_proxy_from_t_now(t) for t in sched]
+    skip = [True] * 30
+    sp.apply_max_streak_constraint(skip, z, [1.0] * 30)
+    _assert_streaks_ok(skip, z)
+
+    # The expected count is derived independently here, not hard-coded: a
+    # greedy left-to-right walk keeps a step iff the run so far is shorter
+    # than that step's limit -- which is exactly the maximum number of skips
+    # placeable subject to the per-step constraint when every step is
+    # proposed (each forced-full step is the shortest possible break).
+    expected = 0
+    counter = 0
+    for zi in z:
+        allowed = sp.ZONE_MAX_STREAK[sp.zone_from_z(zi)]
+        if counter >= allowed:
+            counter = 0
+        else:
+            counter += 1
+            expected += 1
+    assert sum(skip) == expected
+    # For this schedule (4 danger + 11 middle + 15 safe steps) that is 21,
+    # versus 3 under the old implementation.
+    assert sum(skip) == 21
+    assert expected > 3
+
+
+def test_streak_mean_skip_count_non_decreasing_in_flat_p():
+    # Regression for the 2026-08-03 collapse: with a flat skip probability
+    # swept 0.1 -> 1.0, the post-trim mean skip count (over many seeds) must
+    # be non-decreasing in p. The old rule inverted at high p (runs merged
+    # into one, so the danger limit governed everything) and the mean fell.
+    import random as _random
+
+    sched = _t_now_schedule(30)
+    z = [sp.logsnr_proxy_from_t_now(t) for t in sched]
+    means = []
+    for i in range(1, 11):
+        p = i / 10.0
+        counts = []
+        for seed in range(40):
+            rng = _random.Random(seed)
+            skip = [rng.random() < p for _ in range(30)]
+            sp.apply_max_streak_constraint(skip, z, [p] * 30)
+            _assert_streaks_ok(skip, z)
+            counts.append(sum(skip))
+        means.append(sum(counts) / len(counts))
+    for a, b in zip(means, means[1:]):
+        assert b >= a, "mean skip count fell as p rose: %r" % (means,)
+    # The sweep must actually span a wide range (not a flat, trivially
+    # non-decreasing line) and end at the all-True ceiling.
+    assert means[0] < 5.0
+    assert means[-1] == 21.0
+
+
+def test_streak_zone_crossing_run_splits_per_zone():
+    # A single proposed run crossing danger -> middle -> safe. Each zone's
+    # own limit must hold within it: danger steps may never be the 2nd skip
+    # of a run, middle steps never the 3rd, safe steps never the 4th.
+    z = (
+        [-6.0, -5.5, -5.0, -4.5]       # danger (limit 1)
+        + [-3.5, -3.0, -2.5, -2.0, -1.0]  # middle (limit 2)
+        + [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]  # safe (limit 3)
+    )
+    skip = [True] * len(z)
+    sp.apply_max_streak_constraint(skip, z, [1.0] * len(z))
+    _assert_streaks_ok(skip, z)
+    # Danger steps alternate (limit 1): indices 0 and 2 survive, 1 and 3 are
+    # flipped. The counter then enters the middle zone at 0.
+    assert skip[:4] == [True, False, True, False]
+    # No run anywhere exceeds the global maximum limit (safe's 3).
+    assert _max_run(skip) <= 3
+    # And no run containing a danger step is longer than 1.
+    for k, s in enumerate(skip):
+        if s and sp.zone_from_z(z[k]) == "danger":
+            assert k == 0 or not skip[k - 1]
+
+
 def test_streak_determinism_on_copies():
     skip = [True, True, True, True, True, True]
     z = [-1.0, -2.0, -3.0, -1.5, -0.5, -2.5]
@@ -317,21 +407,26 @@ def _max_run(skip):
 
 
 def _assert_streaks_ok(skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES):
-    n = len(skip)
-    i = 0
-    while i < n:
-        if not skip[i]:
-            i += 1
+    """Per-step streak invariant (2026-08-03 spec).
+
+    The old helper asserted the *run-level* rule (a run may not exceed the
+    minimum ZONE_MAX_STREAK over the zones it touches). Under the new
+    per-step rule a run legitimately spans zones and may be longer than that
+    minimum, so the invariant checked here is the one the implementation
+    actually enforces: at every skipped step, the number of consecutive
+    skips ending at that step must not exceed that step's own zone limit.
+    """
+    counter = 0
+    for k, s in enumerate(skip):
+        if not s:
+            counter = 0
             continue
-        j = i
-        while j < n and skip[j]:
-            j += 1
-        allowed = min(
-            sp.ZONE_MAX_STREAK[sp.zone_from_z(z[k], boundaries)]
-            for k in range(i, j)
+        counter += 1
+        allowed = sp.ZONE_MAX_STREAK[sp.zone_from_z(z[k], boundaries)]
+        assert counter <= allowed, (
+            "step %d (zone %s, allowed %d) ends a run of %d"
+            % (k, sp.zone_from_z(z[k], boundaries), allowed, counter)
         )
-        assert (j - i) <= allowed
-        i = j
 
 
 # --- generated pattern respects streaks -------------------------------------
