@@ -1164,6 +1164,9 @@ def _apply_hare_pattern_infotext(p) -> None:
     if STATE.hareskip_mode == MODE_MANUAL:
         _apply_manual_skip_infotext(p)
         return
+    if STATE.hareskip_mode == MODE_TEACACHE:
+        _apply_tea_skip_infotext(p)
+        return
     if STATE.hareskip_mode != MODE_HARESKIP:
         return
     pattern = STATE.hareskip_pattern
@@ -1217,6 +1220,41 @@ def _apply_manual_skip_infotext(p) -> None:
         )
     except Exception as exc:
         warning(f"manual_skip_metadata_failed reason={exc}")
+
+
+def _apply_tea_skip_infotext(p) -> None:
+    """Write the realized Tea skipped_steps infotext key.
+
+    TeaCache mode only. Mirrors ``_apply_manual_skip_infotext``: the skip
+    execution machinery (residual reuse in the patcher's shared forward body)
+    is common to all three modes, so TeaCache's threshold-decided skips land
+    in the same ``STATE.hareskip_skipped_steps`` (0-based) record as HareSkip
+    and Manual Skip. Reports the REALIZED skips — what the patcher actually
+    skipped — not the threshold/window configuration (those are already
+    written earlier by ``_apply_infotext_metadata`` as ``Tea threshold`` /
+    ``Tea progress`` etc.). Same 1-based, space-joined, ascending format as
+    ``Hare skipped_steps`` / ``Manual skipped_steps``.
+    """
+    try:
+        params = _extra_generation_params(p)
+        realized = sorted({int(step) + 1 for step in STATE.hareskip_skipped_steps})
+        params["Tea skipped_steps"] = " ".join(str(step) for step in realized)
+
+        rows = getattr(p, "_hareskip_auto_rows", None)
+        if rows:
+            row_index = STATE.auto_teacache_row_index
+            if row_index is None:
+                row_index = 0
+            row_count = STATE.auto_teacache_row_count or len(rows)
+        else:
+            row_index = 0
+            row_count = 1
+        info(
+            "tea_realized "
+            f"index={row_index + 1}/{row_count} steps={realized}"
+        )
+    except Exception as exc:
+        warning(f"tea_skip_metadata_failed reason={exc}")
 
 
 def _format_hare_params(params: dict) -> str:

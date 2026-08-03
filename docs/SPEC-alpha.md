@@ -206,7 +206,7 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 | --- | --- |
 | 共通（identity） | `HareSkip enabled`, `HareSkip mode` |
 | HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`（生成開始時）／`Hare skip_window`（例 `0.05-0.95`）, `Hare zone_boundaries`（例 `-4.0/0.0`）, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
-| TeaCache モードのみ | `Tea threshold`, `Tea progress`, `Tea coefficient_profile`, `Tea max_skip_streak`, `Tea force_full_interval`, `Tea shift`, `Tea modulated_source`, `Tea capture_pairs`, `Tea auto_row_index`, `Tea auto_row_name` |
+| TeaCache モードのみ | `Tea threshold`, `Tea progress`, `Tea coefficient_profile`, `Tea max_skip_streak`, `Tea force_full_interval`, `Tea shift`, `Tea modulated_source`, `Tea capture_pairs`, `Tea auto_row_index`, `Tea auto_row_name`（生成開始時）／`Tea skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`。`Manual skipped_steps` / `Hare skipped_steps` と同じ表記規約） |
 | Manual Skip モードのみ | `Manual skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`） |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
 
