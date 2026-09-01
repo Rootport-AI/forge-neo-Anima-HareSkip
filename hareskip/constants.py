@@ -26,8 +26,11 @@ HareSkip stochastic-mode arguments (``hareskip_mode`` /
 skip-window / zone-boundary scalars (``hareskip_window_start`` /
 ``hareskip_window_end`` / ``hareskip_zone_low`` / ``hareskip_zone_high``) are
 appended after the original 26, and the Manual Skip mode text field
-(``manual_skip_steps``) is appended last, so every earlier position is
-untouched (34 total).
+(``manual_skip_steps``) is appended last. The five HareSkip v0.2 arguments
+(``hareskip_streak_danger`` / ``middle`` / ``safe``, ``hareskip_exact_target``,
+``hareskip_probability_model``) are appended after those, so every earlier
+position is untouched (39 total; 2026-09-01: appended at the end, so the
+existing 34 positions are unchanged).
 """
 
 # --- Skip-strategy mode identifiers -----------------------------------------
@@ -48,8 +51,10 @@ HARESKIP_MODES = [MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL]
 #
 # The original 26 arguments keep their positions; the three HareSkip
 # stochastic-mode arguments and the four skip-window / zone-boundary scalars
-# are appended next, and the Manual Skip mode text field is appended last
-# (34 total).
+# are appended next, the Manual Skip mode text field follows, and the five
+# HareSkip v0.2 arguments (zone streak limits, exact target, probability
+# model) are appended last (39 total; 2026-09-01: appended at the end, so the
+# existing 34 positions are unchanged).
 UI_ARG_ORDER = [
     "enabled",
     "debug_log_enabled",
@@ -85,6 +90,18 @@ UI_ARG_ORDER = [
     "hareskip_zone_low",
     "hareskip_zone_high",
     "manual_skip_steps",
+    "hareskip_streak_danger",
+    "hareskip_streak_middle",
+    "hareskip_streak_safe",
+    "hareskip_exact_target",
+    "hareskip_probability_model",
 ]
+
+# Smallest argument count still accepted by ``script._apply_ui_args``: a
+# payload from before the 2026-09-01 five-argument append. Anything in
+# [LEGACY_MIN_UI_ARG_COUNT, EXPECTED_UI_ARG_COUNT) is padded with
+# ``apply_options`` defaults (which reproduce the pre-v0.2 behaviour) and
+# warned about once; anything shorter falls back to shared settings.
+LEGACY_MIN_UI_ARG_COUNT = 34
 
 EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)

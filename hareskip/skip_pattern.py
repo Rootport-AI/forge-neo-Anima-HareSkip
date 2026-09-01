@@ -127,7 +127,11 @@ class SkipPattern:
 
 
 def apply_max_streak_constraint(
-    skip, z_by_step, p_by_step, zone_boundaries=DEFAULT_ZONE_BOUNDARIES
+    skip,
+    z_by_step,
+    p_by_step,
+    zone_boundaries=DEFAULT_ZONE_BOUNDARIES,
+    zone_max_streak=None,
 ):
     """Trim skip runs in place so no step exceeds its own zone's streak.
 
@@ -136,10 +140,16 @@ def apply_max_streak_constraint(
     immediately preceding the current step. For each candidate step ``k``
     (``skip[k]`` is True), the step's *own* zone
     (``zone_from_z(z_by_step[k], zone_boundaries)``) supplies the limit: if
-    the counter has already reached ``ZONE_MAX_STREAK[zone]`` the step is
-    flipped back to full and the counter resets to 0; otherwise the skip is
-    kept and the counter increments. Steps that were already full reset the
-    counter to 0.
+    the counter has already reached the zone's limit the step is flipped
+    back to full and the counter resets to 0; otherwise the skip is kept and
+    the counter increments. Steps that were already full reset the counter
+    to 0.
+
+    ``zone_max_streak`` maps zone name ("danger"/"middle"/"safe") to the max
+    number of consecutive skips allowed in that zone; it defaults to the
+    module constant ``ZONE_MAX_STREAK`` when None. A limit of 0 forces every
+    step in that zone full (the counter starts at 0, so ``counter >= 0``
+    holds immediately and every candidate is flipped back).
 
     ``p_by_step`` is accepted for signature compatibility (and callers pass
     it) but the per-step rule needs no tie-breaking, so it is unused.
@@ -152,12 +162,13 @@ def apply_max_streak_constraint(
     p = 1.0 on the 30-step reference schedule, against 21 for the per-step
     trim, or 19 under the default skip window). See docs/SPEC-alpha.md §4.5.
     """
+    limits = ZONE_MAX_STREAK if zone_max_streak is None else zone_max_streak
     counter = 0
     for k in range(len(skip)):
         if not skip[k]:
             counter = 0
             continue
-        allowed = ZONE_MAX_STREAK[zone_from_z(z_by_step[k], zone_boundaries)]
+        allowed = limits[zone_from_z(z_by_step[k], zone_boundaries)]
         if counter >= allowed:
             skip[k] = False
             counter = 0
@@ -207,6 +218,7 @@ def generate_skip_pattern(
     zone_boundaries=DEFAULT_ZONE_BOUNDARIES,
     exact_target=None,
     max_resample=100,
+    zone_max_streak=None,
 ):
     """Generate a stochastic skip pattern for all steps.
 
@@ -215,7 +227,9 @@ def generate_skip_pattern(
     ``progress_i = idx / (num_steps - 1)``. Excluded steps get ``p = 0.0``
     and ``skip = False``. Eligible steps skip when ``rng.random() < p``. The
     zone-based max-streak constraint (3-zone model, ``zone_boundaries``) is
-    then applied.
+    then applied. ``zone_max_streak`` maps zone name -> max consecutive
+    skips; None uses the module constant ``ZONE_MAX_STREAK``, and a limit of
+    0 forces every step in that zone full.
 
     ``expected_skips_before_streak`` is the sum of ``p`` over eligible steps
     (deterministic, independent of the RNG draws); excluded steps carry
@@ -236,7 +250,9 @@ def generate_skip_pattern(
         skip, z_by_step, p_by_step = _draw_pattern(
             t_now_by_step, params, skip_window, num_steps, model, rng
         )
-        apply_max_streak_constraint(skip, z_by_step, p_by_step, zone_boundaries)
+        apply_max_streak_constraint(
+            skip, z_by_step, p_by_step, zone_boundaries, zone_max_streak
+        )
         return skip, z_by_step, p_by_step
 
     if exact_target is None:

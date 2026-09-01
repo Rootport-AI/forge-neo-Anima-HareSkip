@@ -764,11 +764,15 @@ def _hareskip_ensure_pattern() -> Any:
         t_now_list,
         STATE.hareskip_aggressiveness,
         skip_seed,
-        STATE.hareskip_probability_model,
-        skip_window=(STATE.hareskip_window_start, STATE.hareskip_window_end),
-        zone_boundaries=(STATE.hareskip_zone_low, STATE.hareskip_zone_high),
+        **STATE.hareskip_pattern_kwargs(),
     )
     STATE.hareskip_pattern = pattern
+    streaks = STATE.hareskip_zone_max_streak()
+    exact_target_note = (
+        f" exact_target={STATE.hareskip_exact_target}"
+        if STATE.hareskip_exact_target > 0
+        else ""
+    )
     info(
         "hareskip_pattern="
         f"model={pattern.probability_model} "
@@ -780,7 +784,9 @@ def _hareskip_ensure_pattern() -> Any:
         f"skip_window={pattern.skip_window[0]:.3f}..{pattern.skip_window[1]:.3f} "
         f"zone_boundaries={pattern.zone_boundaries[0]:.2f}/{pattern.zone_boundaries[1]:.2f} "
         f"guarded_steps={pattern.guarded_steps} "
-        f"expected_skips={pattern.expected_skips_before_streak:.3f}"
+        f"expected_skips={pattern.expected_skips_before_streak:.3f} "
+        f"zone_max_streak={streaks['danger']}/{streaks['middle']}/{streaks['safe']}"
+        + exact_target_note
     )
     return pattern
 

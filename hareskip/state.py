@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import Any, Optional
 
 from .constants import MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL, HARESKIP_MODES
-from .probability_models import DEFAULT_PROBABILITY_MODEL
+from .probability_models import DEFAULT_PROBABILITY_MODEL, PROBABILITY_MODELS
 
 
 MODE_OFF = ""
@@ -276,6 +276,13 @@ class RuntimeState:
     hareskip_window_end: float = 0.95
     hareskip_zone_low: float = -4.0
     hareskip_zone_high: float = 0.0
+    # Per-zone max consecutive skips, UI-configurable since 2026-09-01 (was
+    # the module constant skip_pattern.ZONE_MAX_STREAK). 0 = that zone is
+    # always computed in full. hareskip_exact_target: 0 = disabled.
+    hareskip_streak_danger: int = 1
+    hareskip_streak_middle: int = 2
+    hareskip_streak_safe: int = 3
+    hareskip_exact_target: int = 0
     hareskip_probability_model: str = DEFAULT_PROBABILITY_MODEL
     hareskip_image_seed: Optional[int] = None
     # Manual Skip mode: raw comma-separated step text from the UI, and the
@@ -407,6 +414,11 @@ class RuntimeState:
         hareskip_zone_low: float = -4.0,
         hareskip_zone_high: float = 0.0,
         manual_skip_steps: str = "",
+        hareskip_streak_danger: int = 1,
+        hareskip_streak_middle: int = 2,
+        hareskip_streak_safe: int = 3,
+        hareskip_exact_target: int = 0,
+        hareskip_probability_model: str = DEFAULT_PROBABILITY_MODEL,
     ) -> None:
         self.enabled = bool(enabled)
         self.debug_log_enabled = bool(debug_log_enabled)
@@ -486,6 +498,58 @@ class RuntimeState:
         # Manual Skip: keep the raw text (stripped); validation/parsing happens
         # later in before_process against p.steps.
         self.manual_skip_steps = str(manual_skip_steps or "").strip()
+
+        # Per-zone max consecutive skips (2026-09-01): 0 = never skip in that
+        # zone, 10 = effectively unlimited for typical step counts.
+        self.hareskip_streak_danger = _clamp_int_default(
+            hareskip_streak_danger, 0, 10, 1
+        )
+        self.hareskip_streak_middle = _clamp_int_default(
+            hareskip_streak_middle, 0, 10, 2
+        )
+        self.hareskip_streak_safe = _clamp_int_default(
+            hareskip_streak_safe, 0, 10, 3
+        )
+        # Exact skip-count target: 0 disables the re-roll loop.
+        self.hareskip_exact_target = _clamp_int_default(
+            hareskip_exact_target, 0, 999, 0
+        )
+        # Unknown model names (e.g. from an old infotext) fall back to the
+        # default rather than raising.
+        self.hareskip_probability_model = (
+            hareskip_probability_model
+            if hareskip_probability_model in PROBABILITY_MODELS
+            else DEFAULT_PROBABILITY_MODEL
+        )
+
+    def hareskip_zone_max_streak(self) -> dict:
+        """Per-zone max consecutive skips as a dict for skip_pattern.
+
+        Pure and Forge-independent, so the wiring can be tested without going
+        through the patcher.
+        """
+        return {
+            "danger": self.hareskip_streak_danger,
+            "middle": self.hareskip_streak_middle,
+            "safe": self.hareskip_streak_safe,
+        }
+
+    def hareskip_pattern_kwargs(self) -> dict:
+        """Keyword arguments for ``skip_pattern.generate_skip_pattern``.
+
+        Collects every UI-configurable generation knob into one mapping so
+        ``patcher`` only has to spread it. Pure and Forge-independent, so the
+        wiring can be tested without going through the patcher (which imports
+        torch). ``exact_target`` is 0-means-disabled in the state and None in
+        the generator API.
+        """
+        return {
+            "probability_model": self.hareskip_probability_model,
+            "skip_window": (self.hareskip_window_start, self.hareskip_window_end),
+            "zone_boundaries": (self.hareskip_zone_low, self.hareskip_zone_high),
+            "zone_max_streak": self.hareskip_zone_max_streak(),
+            "exact_target": self.hareskip_exact_target or None,
+        }
 
     def active(self) -> bool:
         return (
@@ -595,6 +659,21 @@ def _clamp_int(value: Any, minimum: int, maximum: int) -> int:
         number = int(value)
     except Exception:
         number = minimum
+    return max(minimum, min(maximum, number))
+
+
+def _clamp_int_default(value: Any, minimum: int, maximum: int, default: int) -> int:
+    """Clamp ``value`` to [minimum, maximum]; non-numeric input -> ``default``.
+
+    Unlike ``_clamp_int`` (which falls back to ``minimum``) the fallback here
+    is an explicit default, so a blank or garbage UI value restores the
+    control's intended default rather than collapsing to the floor. Pure and
+    Forge-independent.
+    """
+    try:
+        number = int(value)
+    except Exception:
+        return default
     return max(minimum, min(maximum, number))
 
 

@@ -18,6 +18,17 @@ import re
 import hareskip.constants as constants
 import hareskip.state as state
 
+from conftest import import_hareskip_script
+
+
+def _idx(name: str) -> int:
+    """Positional index of a UI argument, by name.
+
+    Keeps the normalization tests readable and immune to future appends to
+    ``UI_ARG_ORDER`` (which would silently shift hard-coded indices).
+    """
+    return constants.UI_ARG_ORDER.index(name)
+
 
 _SCRIPT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -89,7 +100,7 @@ def _extract_ui_return_names() -> list[str]:
 def _dummy_apply_options_args() -> list:
     """A valid positional arg list for apply_options, in UI_ARG_ORDER order.
 
-    The last four entries (skip window / zone boundaries) are supplied by the
+    The window / zone / streak / exact-target entries are overridden by the
     normalization tests; sensible defaults are used here.
     """
     return [
@@ -127,14 +138,19 @@ def _dummy_apply_options_args() -> list:
         -4.0,   # hareskip_zone_low
         0.0,    # hareskip_zone_high
         "",     # manual_skip_steps
+        1,      # hareskip_streak_danger
+        2,      # hareskip_streak_middle
+        3,      # hareskip_streak_safe
+        0,      # hareskip_exact_target
+        "monotone_saturate_v0.1",  # hareskip_probability_model
     ]
 
 
 def test_apply_options_normalizes_window_clamp_and_swap():
     args = _dummy_apply_options_args()
     # Reversed and out-of-range window -> clamped to [0, 1] and swapped.
-    args[29] = 1.5   # hareskip_window_start (over max)
-    args[30] = -0.5  # hareskip_window_end (under min)
+    args[_idx("hareskip_window_start")] = 1.5   # over max
+    args[_idx("hareskip_window_end")] = -0.5    # under min
     s = state.RuntimeState()
     s.apply_options(*args)
     # 1.5 -> 1.0, -0.5 -> 0.0, then swapped so start <= end.
@@ -145,8 +161,8 @@ def test_apply_options_normalizes_window_clamp_and_swap():
 def test_apply_options_normalizes_zone_clamp_and_swap():
     args = _dummy_apply_options_args()
     # Reversed and out-of-range zone boundaries -> clamped to [-8, 8], swapped.
-    args[31] = 5.0    # hareskip_zone_low
-    args[32] = -9.0   # hareskip_zone_high (under min)
+    args[_idx("hareskip_zone_low")] = 5.0    # hareskip_zone_low
+    args[_idx("hareskip_zone_high")] = -9.0  # under min
     s = state.RuntimeState()
     s.apply_options(*args)
     # -9.0 -> -8.0, then swapped so low <= high.
@@ -156,8 +172,8 @@ def test_apply_options_normalizes_zone_clamp_and_swap():
 
 def test_apply_options_keeps_valid_ranges():
     args = _dummy_apply_options_args()
-    args[29], args[30] = 0.1, 0.8
-    args[31], args[32] = -3.0, 2.0
+    args[_idx("hareskip_window_start")], args[_idx("hareskip_window_end")] = 0.1, 0.8
+    args[_idx("hareskip_zone_low")], args[_idx("hareskip_zone_high")] = -3.0, 2.0
     s = state.RuntimeState()
     s.apply_options(*args)
     assert (s.hareskip_window_start, s.hareskip_window_end) == (0.1, 0.8)
@@ -179,3 +195,103 @@ def test_ui_return_list_matches_order():
         f"ui() return: {names}\n"
         f"UI_ARG_ORDER: {constants.UI_ARG_ORDER}"
     )
+
+
+# --- HareSkip v0.2 argument normalization -----------------------------------
+
+
+def test_streak_args_clamped_and_defaulted():
+    args = _dummy_apply_options_args()
+    args[_idx("hareskip_streak_danger")] = -5    # below min -> 0
+    args[_idx("hareskip_streak_middle")] = 99    # above max -> 10
+    args[_idx("hareskip_streak_safe")] = "abc"   # non-numeric -> default 3
+    s = state.RuntimeState()
+    s.apply_options(*args)
+    assert s.hareskip_streak_danger == 0
+    assert s.hareskip_streak_middle == 10
+    assert s.hareskip_streak_safe == 3
+    assert s.hareskip_zone_max_streak() == {
+        "danger": 0,
+        "middle": 10,
+        "safe": 3,
+    }
+
+
+def test_streak_defaults_survive_roundtrip():
+    s = state.RuntimeState()
+    s.apply_options(*_dummy_apply_options_args())
+    assert s.hareskip_zone_max_streak() == {"danger": 1, "middle": 2, "safe": 3}
+
+
+def test_exact_target_normalization():
+    for raw, expected in ((-3, 0), ("x", 0), (15, 15), (10 ** 6, 999)):
+        args = _dummy_apply_options_args()
+        args[_idx("hareskip_exact_target")] = raw
+        s = state.RuntimeState()
+        s.apply_options(*args)
+        assert s.hareskip_exact_target == expected, raw
+
+
+def test_unknown_probability_model_falls_back_to_default():
+    from hareskip.probability_models import (
+        DEFAULT_PROBABILITY_MODEL,
+        PROBABILITY_MODELS,
+    )
+
+    args = _dummy_apply_options_args()
+    args[_idx("hareskip_probability_model")] = "no_such_model_v9"
+    s = state.RuntimeState()
+    s.apply_options(*args)
+    assert s.hareskip_probability_model == DEFAULT_PROBABILITY_MODEL
+
+    # Every registered name is preserved verbatim.
+    for name in PROBABILITY_MODELS:
+        args = _dummy_apply_options_args()
+        args[_idx("hareskip_probability_model")] = name
+        s = state.RuntimeState()
+        s.apply_options(*args)
+        assert s.hareskip_probability_model == name
+
+
+# --- backward-compatible short payloads -------------------------------------
+
+
+def _reset_script_state(script):
+    script.STATE.__dict__.update(state.RuntimeState().__dict__)
+    script._ui_arg_count_warned = False
+
+
+def test_legacy_payload_is_padded_with_defaults():
+    script = import_hareskip_script()
+    _reset_script_state(script)
+    legacy = _dummy_apply_options_args()[: constants.LEGACY_MIN_UI_ARG_COUNT]
+    assert len(legacy) == 34
+    script._apply_ui_args(legacy)
+    # Accepted (not the refresh_settings fallback): the payload's own values
+    # landed, and the five appended arguments took their defaults.
+    assert script.STATE.hareskip_aggressiveness == 0.5
+    assert script.STATE.hareskip_window_start == 0.05
+    assert script.STATE.hareskip_zone_max_streak() == {
+        "danger": 1,
+        "middle": 2,
+        "safe": 3,
+    }
+    assert script.STATE.hareskip_exact_target == 0
+    from hareskip.probability_models import DEFAULT_PROBABILITY_MODEL
+
+    assert script.STATE.hareskip_probability_model == DEFAULT_PROBABILITY_MODEL
+    # The padding warning is emitted exactly once per process.
+    assert script._ui_arg_count_warned is True
+
+
+def test_payload_shorter_than_legacy_minimum_falls_back(monkeypatch):
+    script = import_hareskip_script()
+    _reset_script_state(script)
+    called = []
+    monkeypatch.setattr(
+        script.STATE, "refresh_settings", lambda: called.append(True)
+    )
+    too_short = _dummy_apply_options_args()[: constants.LEGACY_MIN_UI_ARG_COUNT - 1]
+    assert len(too_short) == 33
+    script._apply_ui_args(too_short)
+    assert called == [True]

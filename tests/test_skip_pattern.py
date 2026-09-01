@@ -414,7 +414,9 @@ def _max_run(skip):
     return best
 
 
-def _assert_streaks_ok(skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES):
+def _assert_streaks_ok(
+    skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES, zone_max_streak=None
+):
     """Per-step streak invariant (2026-08-03 spec).
 
     The old helper asserted the *run-level* rule (a run may not exceed the
@@ -430,7 +432,8 @@ def _assert_streaks_ok(skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES):
             counter = 0
             continue
         counter += 1
-        allowed = sp.ZONE_MAX_STREAK[sp.zone_from_z(z[k], boundaries)]
+        limits = sp.ZONE_MAX_STREAK if zone_max_streak is None else zone_max_streak
+        allowed = limits[sp.zone_from_z(z[k], boundaries)]
         assert counter <= allowed, (
             "step %d (zone %s, allowed %d) ends a run of %d"
             % (k, sp.zone_from_z(z[k], boundaries), allowed, counter)
@@ -580,3 +583,91 @@ def test_expected_skips_monotone_in_aggressiveness():
             # descending schedule.
             assert val > prev
         prev = val
+
+
+# --- configurable zone_max_streak (2026-09-01) ------------------------------
+
+
+def test_zone_max_streak_none_matches_explicit_constant():
+    sched = _t_now_schedule(30)
+    for seed in range(8):
+        implicit = sp.generate_skip_pattern(
+            sched, aggressiveness=0.8, skip_seed=seed,
+        )
+        explicit = sp.generate_skip_pattern(
+            sched, aggressiveness=0.8, skip_seed=seed,
+            zone_max_streak=sp.ZONE_MAX_STREAK,
+        )
+        assert implicit.skip == explicit.skip
+        assert implicit.skip_count == explicit.skip_count
+
+
+def _mean_skip_count(sched, zone_max_streak, seeds=256, a=0.8):
+    total = 0
+    for seed in range(seeds):
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=a, skip_seed=seed,
+            zone_max_streak=zone_max_streak,
+        )
+        total += pat.skip_count
+    return total / seeds
+
+
+def test_relaxed_zone_max_streak_increases_mean_skip_count():
+    sched = _t_now_schedule(30)
+    baseline = _mean_skip_count(sched, None)
+    relaxed = _mean_skip_count(sched, {"danger": 3, "middle": 5, "safe": 8})
+    assert relaxed > baseline
+
+
+def test_zero_limit_forces_that_zone_full():
+    sched = _t_now_schedule(30)
+    limits = {"danger": 0, "middle": 2, "safe": 3}
+    for seed in range(16):
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=1.0, skip_seed=seed, zone_max_streak=limits,
+        )
+        danger_steps = [
+            idx for idx in range(pat.num_steps)
+            if sp.zone_from_z(pat.z_by_step[idx], pat.zone_boundaries) == "danger"
+        ]
+        assert danger_steps, "schedule must contain danger-zone steps"
+        for idx in danger_steps:
+            assert pat.skip[idx] is False
+        _assert_streaks_ok(
+            pat.skip, pat.z_by_step, pat.zone_boundaries, zone_max_streak=limits
+        )
+
+
+def test_all_zero_limits_disable_skipping_entirely():
+    sched = _t_now_schedule(30)
+    limits = {"danger": 0, "middle": 0, "safe": 0}
+    for seed in range(8):
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=1.0, skip_seed=seed, zone_max_streak=limits,
+        )
+        assert pat.skip_count == 0
+        assert pat.skipped_steps == []
+
+
+def test_apply_max_streak_constraint_accepts_custom_limits():
+    # Six consecutive safe-zone steps (z well above the high boundary), all
+    # drawn as skips: a limit of 4 must trim the 5th, then restart the run.
+    z = [1.0] * 6
+    p = [1.0] * 6
+    skip = [True] * 6
+    sp.apply_max_streak_constraint(
+        skip, z, p, sp.DEFAULT_ZONE_BOUNDARIES, {"danger": 1, "middle": 2, "safe": 4}
+    )
+    assert skip == [True, True, True, True, False, True]
+
+    # The same input under the module default (safe -> 3).
+    skip2 = [True] * 6
+    sp.apply_max_streak_constraint(skip2, z, p)
+    assert skip2 == [True, True, True, False, True, True]
+
+
+def test_default_probability_model_is_monotone_saturate():
+    sched = _t_now_schedule(30)
+    pat = sp.generate_skip_pattern(sched, aggressiveness=0.5, skip_seed=1)
+    assert pat.probability_model == "monotone_saturate_v0.1"

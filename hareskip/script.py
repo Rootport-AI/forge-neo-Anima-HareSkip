@@ -22,6 +22,7 @@ from .callbacks import register_callbacks
 from .constants import (
     EXPECTED_UI_ARG_COUNT,
     HARESKIP_MODES,
+    LEGACY_MIN_UI_ARG_COUNT,
     MODE_HARESKIP,
     MODE_MANUAL,
     MODE_TEACACHE,
@@ -37,7 +38,12 @@ from .diagnostics import log_generation_start, log_timing_summary
 from .logging import error, exception, info, warning
 from .model_detect import detect_model
 from .patcher import apply_patch, remove_patch
-from .probability_models import METHOD_NAME, METHOD_VERSION
+from .probability_models import (
+    DEFAULT_PROBABILITY_MODEL,
+    METHOD_NAME,
+    METHOD_VERSION,
+    PROBABILITY_MODELS,
+)
 from .state import (
     MODE_OFF,
     MODES,
@@ -179,6 +185,37 @@ class Script(scripts.Script):
                         value=0.0,
                         elem_id="hare-zone-high",
                     )
+
+                # Per-zone max consecutive skips (2026-09-01). These were
+                # the skip_pattern.ZONE_MAX_STREAK constant; 0 means the zone
+                # is always computed in full.
+                hareskip_streak_danger = gr.Slider(
+                    label="Max skip streak — danger (z < low)",
+                    minimum=0,
+                    maximum=10,
+                    step=1,
+                    value=1,
+                    info="0 = never skip in this zone",
+                    elem_id="hare-streak-danger",
+                )
+                hareskip_streak_middle = gr.Slider(
+                    label="Max skip streak — middle (low ≤ z < high)",
+                    minimum=0,
+                    maximum=10,
+                    step=1,
+                    value=2,
+                    info="0 = never skip in this zone",
+                    elem_id="hare-streak-middle",
+                )
+                hareskip_streak_safe = gr.Slider(
+                    label="Max skip streak — safe (z ≥ high)",
+                    minimum=0,
+                    maximum=10,
+                    step=1,
+                    value=3,
+                    info="0 = never skip in this zone",
+                    elem_id="hare-streak-safe",
+                )
 
                 hareskip_estimate_md = gr.Markdown(
                     value=_format_hareskip_estimate(0.5),
@@ -393,6 +430,27 @@ class Script(scripts.Script):
                     value=_default_option("hareskip_verbose_diagnose_log", False),
                     elem_id="hareskip-verbose-diagnose-log",
                 )
+                gr.HTML(
+                    '<div style="border-top: 3px solid var(--block-border-color, #4b5563); margin: 0.85rem 0 0.7rem;"></div>',
+                    elem_id="hareskip-debug-hare-divider",
+                )
+                hareskip_probability_model = gr.Dropdown(
+                    label="HareSkip probability model",
+                    choices=sorted(PROBABILITY_MODELS),
+                    value=DEFAULT_PROBABILITY_MODEL,
+                    elem_id="hare-probability-model",
+                )
+                hareskip_exact_target = gr.Number(
+                    label="Exact skip target (0 = off)",
+                    value=0,
+                    precision=0,
+                    info=(
+                        "Re-roll the pattern up to 100 times to hit this exact "
+                        "skip count. Unreachable targets fall back to the "
+                        "nearest attempt (never errors)."
+                    ),
+                    elem_id="hare-exact-target",
+                )
             hareskip_dry_run = gr.Checkbox(
                 label="Dry run",
                 value=False,
@@ -484,6 +542,11 @@ class Script(scripts.Script):
             hareskip_zone_low,
             hareskip_zone_high,
             manual_skip_steps,
+            hareskip_streak_danger,
+            hareskip_streak_middle,
+            hareskip_streak_safe,
+            hareskip_exact_target,
+            hareskip_probability_model,
         ]
 
     def before_process(self, p, *script_args):
@@ -960,9 +1023,29 @@ _ui_arg_count_warned = False
 
 
 def _apply_ui_args(script_args) -> None:
+    """Apply a UI-arg payload to STATE, tolerating pre-v0.2 short payloads.
+
+    A payload with at least ``EXPECTED_UI_ARG_COUNT`` entries is applied as
+    before. A payload from before the 2026-09-01 five-argument append (length
+    in ``[LEGACY_MIN_UI_ARG_COUNT, EXPECTED_UI_ARG_COUNT)``) is accepted with
+    the missing trailing arguments left to ``apply_options``' own defaults,
+    which reproduce the pre-v0.2 behaviour (streaks 1/2/3, exact target off,
+    default probability model); a single warning is emitted. Shorter payloads
+    keep the old fallback to shared settings.
+    """
     global _ui_arg_count_warned
     if len(script_args) >= _EXPECTED_UI_ARG_COUNT:
         STATE.apply_options(*script_args[:_EXPECTED_UI_ARG_COUNT])
+        return
+    if len(script_args) >= LEGACY_MIN_UI_ARG_COUNT:
+        if not _ui_arg_count_warned:
+            _ui_arg_count_warned = True
+            warning(
+                "hareskip_ui_args_padded "
+                f"received={len(script_args)} expected={_EXPECTED_UI_ARG_COUNT}; "
+                "missing trailing arguments defaulted (pre-v0.2 payload)"
+            )
+        STATE.apply_options(*script_args)
         return
     if script_args and not _ui_arg_count_warned:
         _ui_arg_count_warned = True
@@ -1124,6 +1207,13 @@ def _apply_infotext_metadata(p) -> None:
             params["Hare probability_model"] = STATE.hareskip_probability_model
             params["Hare aggressiveness"] = f"{STATE.hareskip_aggressiveness:.2f}"
             params["Hare skip_seed_offset"] = STATE.hareskip_skip_seed_offset
+            params["Hare zone_streaks"] = (
+                f"{STATE.hareskip_streak_danger}"
+                f"/{STATE.hareskip_streak_middle}"
+                f"/{STATE.hareskip_streak_safe}"
+            )
+            if STATE.hareskip_exact_target > 0:
+                params["Hare exact_target"] = STATE.hareskip_exact_target
             if STATE.hareskip_pattern is None:
                 params["Hare pattern"] = "unavailable"
 
