@@ -97,3 +97,137 @@ def test_register_roundtrip():
         assert pm.get_model("dummy_test_model") is model
     finally:
         pm.PROBABILITY_MODELS.pop("dummy_test_model", None)
+
+
+# --- 2026-09-01: monotone_saturate_v0.1 (new default) + sigmoid_band_v0.2 ---
+
+MONO = pm.get_model("monotone_saturate_v0.1")
+BAND2 = pm.get_model("sigmoid_band_v0.2")
+
+_A_GRID = [i / 10.0 for i in range(11)]
+_Z_GRID = [-15.0 + 0.5 * i for i in range(61)]  # -15 .. 15 inclusive
+
+
+def test_registry_contains_three_models():
+    for name in (
+        "sigmoid_band_v0.1",
+        "sigmoid_band_v0.2",
+        "monotone_saturate_v0.1",
+    ):
+        assert name in pm.PROBABILITY_MODELS
+        assert pm.get_model(name) is pm.PROBABILITY_MODELS[name]
+
+
+def test_default_probability_model_is_monotone_and_registered():
+    assert pm.DEFAULT_PROBABILITY_MODEL == "monotone_saturate_v0.1"
+    assert pm.get_model(pm.DEFAULT_PROBABILITY_MODEL) is MONO
+    assert MONO.name == "monotone_saturate_v0.1"
+    assert BAND2.name == "sigmoid_band_v0.2"
+
+
+@pytest.mark.parametrize(
+    "a,p_cap,z_enter",
+    [
+        (0.0, 0.5049, -0.0068),
+        (0.5, 0.710025, -3.171619),
+        (1.0, 0.9279, -10.2183),
+    ],
+)
+def test_mono_params_table(a, p_cap, z_enter):
+    params = MONO.params_from_aggressiveness(a)
+    assert params["p_cap"] == pytest.approx(p_cap, abs=1e-4)
+    assert params["z_enter"] == pytest.approx(z_enter, abs=1e-4)
+    assert params["tau_enter"] == pytest.approx(1.20, abs=1e-4)
+    # The monotone model deliberately has no falling edge.
+    assert "z_exit" not in params
+    assert "tau_exit" not in params
+
+
+@pytest.mark.parametrize(
+    "a,p_cap,z_enter,z_exit",
+    [
+        (0.0, 0.5419, -0.0068, 4.94),
+        (0.5, 0.726, -3.171619, 5.44),
+        (1.0, 0.9356, -10.2183, 5.94),
+    ],
+)
+def test_band2_params_table(a, p_cap, z_enter, z_exit):
+    params = BAND2.params_from_aggressiveness(a)
+    assert params["p_cap"] == pytest.approx(p_cap, abs=1e-4)
+    assert params["z_enter"] == pytest.approx(z_enter, abs=1e-4)
+    assert params["tau_enter"] == pytest.approx(1.20, abs=1e-4)
+    assert params["z_exit"] == pytest.approx(z_exit, abs=1e-4)
+    assert params["tau_exit"] == pytest.approx(0.81, abs=1e-4)
+
+
+def test_mono_non_decreasing_in_z():
+    for a in _A_GRID:
+        params = MONO.params_from_aggressiveness(a)
+        prev = None
+        for z in _Z_GRID:
+            p = MONO.skip_probability(z, params)
+            if prev is not None:
+                assert p >= prev - 1e-12, f"a={a} z={z}"
+            prev = p
+
+
+def test_mono_non_decreasing_in_aggressiveness():
+    for z in _Z_GRID:
+        prev = None
+        for a in _A_GRID:
+            p = MONO.skip_probability(z, MONO.params_from_aggressiveness(a))
+            if prev is not None:
+                assert p >= prev - 1e-12, f"z={z} a={a}"
+            prev = p
+
+
+def test_mono_aggressiveness_clamped():
+    assert MONO.params_from_aggressiveness(-1.0) == (
+        MONO.params_from_aggressiveness(0.0)
+    )
+    assert MONO.params_from_aggressiveness(2.0) == (
+        MONO.params_from_aggressiveness(1.0)
+    )
+
+
+def test_band2_aggressiveness_clamped():
+    assert BAND2.params_from_aggressiveness(-1.0) == (
+        BAND2.params_from_aggressiveness(0.0)
+    )
+    assert BAND2.params_from_aggressiveness(2.0) == (
+        BAND2.params_from_aggressiveness(1.0)
+    )
+
+
+@pytest.mark.parametrize("model", [MONO, BAND2])
+@pytest.mark.parametrize("a", [0.0, 0.5, 1.0])
+@pytest.mark.parametrize("z", [-1e6, 1e6])
+def test_extreme_z_stays_in_unit_interval(model, a, z):
+    p = model.skip_probability(z, model.params_from_aggressiveness(a))
+    assert 0.0 <= p <= 1.0
+
+
+@pytest.mark.parametrize("a", [0.0, 0.5, 1.0])
+def test_mono_asymptotes(a):
+    params = MONO.params_from_aggressiveness(a)
+    assert MONO.skip_probability(1e6, params) == pytest.approx(
+        params["p_cap"], abs=1e-9
+    )
+    assert MONO.skip_probability(-1e6, params) == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("a", [0.0, 0.5, 1.0])
+def test_band2_has_falling_edge(a):
+    params = BAND2.params_from_aggressiveness(a)
+    peak = BAND2.skip_probability(params["z_exit"] - 3.0, params)
+    beyond = BAND2.skip_probability(params["z_exit"] + 5.0, params)
+    assert beyond < peak
+    assert beyond < 0.01
+
+
+@pytest.mark.parametrize("a", [0.0, 0.5, 1.0])
+def test_mono_probability_in_unit_interval_sweep(a):
+    params = MONO.params_from_aggressiveness(a)
+    for i in range(-150, 151):
+        p = MONO.skip_probability(i / 10.0, params)
+        assert 0.0 <= p <= 1.0

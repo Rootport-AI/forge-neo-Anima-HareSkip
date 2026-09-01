@@ -13,7 +13,9 @@ constraint (3 zones: danger/middle/safe, with user-configurable boundaries)
 then trims runs deterministically in a single left-to-right pass, applying
 each step's own zone limit to the running consecutive-skip counter
 (2026-08-03; see apply_max_streak_constraint). End-of-generation moderation
-is handled by the skip-probability taper (probability_models.py), not a zone.
+is handled by the skip window (docs/SPEC-alpha.md Sec. 4.4), not by a zone
+and not by the probability formula -- 2026-09-01 decision; the default model
+``monotone_saturate_v0.1`` has no falling edge.
 
 Skip window semantics (2026-07-10 user decision, WYSIWYG)
 ========================================================
@@ -39,8 +41,10 @@ from . import probability_models
 
 # Default trajectory-coordinate zone boundaries (3-zone max-skip-streak model;
 # see docs/SPEC-alpha.md for the 2026-07-10 removal of the former "final"
-# zone -- end-of-generation moderation is handled by the skip-probability
-# taper in probability_models.py instead). Boundaries are parameterized
+# zone -- end-of-generation moderation is handled by the skip window
+# (SPEC-alpha Sec. 4.4), not by a zone and not by the probability formula
+# (2026-09-01 decision; the default model ``monotone_saturate_v0.1`` has no
+# falling edge). Boundaries are parameterized
 # (see zone_from_z); with the default (low=-4.0, high=0.0):
 #   danger: z < low   (-> streak 1)
 #   middle: low <= z < high  (-> streak 2)
@@ -198,7 +202,7 @@ def generate_skip_pattern(
     t_now_by_step,
     aggressiveness,
     skip_seed,
-    probability_model="sigmoid_band_v0.1",
+    probability_model=probability_models.DEFAULT_PROBABILITY_MODEL,
     skip_window=DEFAULT_SKIP_WINDOW,
     zone_boundaries=DEFAULT_ZONE_BOUNDARIES,
     exact_target=None,

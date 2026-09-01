@@ -101,7 +101,9 @@ def test_default_window_reproduces_old_30_step_guards():
     # max(1, round(0.05 * 30)) = 2 guards: idx 0, 1, 28, 29 are forced full
     # with p == 0.0 and never skipped.
     sched = _t_now_schedule(30)
-    pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=7)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=1.0, skip_seed=7, probability_model="sigmoid_band_v0.1",
+    )
     assert pat.skip_window == (0.05, 0.95)
     assert pat.guarded_steps == 4  # idx 0, 1, 28, 29
     for idx in (0, 1, 28, 29):
@@ -118,7 +120,8 @@ def test_full_window_makes_every_step_eligible():
     # There are zero window-excluded (guarded) steps.
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(
-        sched, aggressiveness=1.0, skip_seed=0, skip_window=(0.0, 1.0)
+        sched, aggressiveness=1.0, skip_seed=0, skip_window=(0.0, 1.0),
+        probability_model="sigmoid_band_v0.1",
     )
     assert pat.skip_window == (0.0, 1.0)
     assert pat.guarded_steps == 0
@@ -127,7 +130,9 @@ def test_full_window_makes_every_step_eligible():
     # so their p equals the raw band value (idx 0's z is far below the band,
     # so its p is ~0 by the band, not by a guard). The eligibility mask is
     # what changed: no step is force-zeroed by the window.
-    default = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=0)
+    default = sp.generate_skip_pattern(
+        sched, aggressiveness=1.0, skip_seed=0, probability_model="sigmoid_band_v0.1",
+    )
     # Default window zeroes idx 1 (progress 0.0345 < 0.05) even though its raw
     # band p is large; the full window leaves it at the raw band value.
     assert default.p_by_step[1] == 0.0
@@ -144,7 +149,8 @@ def test_full_window_makes_every_step_eligible():
     last_can_skip = False
     for seed in range(200):
         p = sp.generate_skip_pattern(
-            band_sched, aggressiveness=1.0, skip_seed=seed, skip_window=(0.0, 1.0)
+            band_sched, aggressiveness=1.0, skip_seed=seed, skip_window=(0.0, 1.0),
+            probability_model="sigmoid_band_v0.1",
         )
         if p.skip[-1]:
             last_can_skip = True
@@ -155,7 +161,8 @@ def test_full_window_makes_every_step_eligible():
 def test_narrow_window_excludes_more_steps():
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(
-        sched, aggressiveness=1.0, skip_seed=1, skip_window=(0.3, 0.7)
+        sched, aggressiveness=1.0, skip_seed=1, skip_window=(0.3, 0.7),
+        probability_model="sigmoid_band_v0.1",
     )
     # progress in [0.3, 0.7] -> idx 9..20 inclusive eligible (12 steps),
     # so 18 guarded.
@@ -184,7 +191,8 @@ def test_custom_zone_boundaries_shift_classification():
 def test_generate_records_zone_boundaries():
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(
-        sched, aggressiveness=0.5, skip_seed=3, zone_boundaries=(-2.0, 2.0)
+        sched, aggressiveness=0.5, skip_seed=3, zone_boundaries=(-2.0, 2.0),
+        probability_model="sigmoid_band_v0.1",
     )
     assert pat.zone_boundaries == (-2.0, 2.0)
 
@@ -435,7 +443,9 @@ def _assert_streaks_ok(skip, z, boundaries=sp.DEFAULT_ZONE_BOUNDARIES):
 def test_generated_pattern_respects_streaks():
     sched = _t_now_schedule(30)
     for seed in range(20):
-        pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=seed)
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=1.0, skip_seed=seed, probability_model="sigmoid_band_v0.1",
+        )
         _assert_streaks_ok(pat.skip, pat.z_by_step)
 
 
@@ -444,7 +454,8 @@ def test_generated_pattern_respects_custom_boundaries():
     boundaries = (-2.0, 2.0)
     for seed in range(20):
         pat = sp.generate_skip_pattern(
-            sched, aggressiveness=1.0, skip_seed=seed, zone_boundaries=boundaries
+            sched, aggressiveness=1.0, skip_seed=seed, zone_boundaries=boundaries,
+            probability_model="sigmoid_band_v0.1",
         )
         assert pat.zone_boundaries == boundaries
         _assert_streaks_ok(pat.skip, pat.z_by_step, boundaries)
@@ -455,8 +466,12 @@ def test_generated_pattern_respects_custom_boundaries():
 
 def test_reproducible_same_inputs():
     sched = _t_now_schedule(30)
-    a = sp.generate_skip_pattern(sched, aggressiveness=0.5, skip_seed=999)
-    b = sp.generate_skip_pattern(sched, aggressiveness=0.5, skip_seed=999)
+    a = sp.generate_skip_pattern(
+        sched, aggressiveness=0.5, skip_seed=999, probability_model="sigmoid_band_v0.1",
+    )
+    b = sp.generate_skip_pattern(
+        sched, aggressiveness=0.5, skip_seed=999, probability_model="sigmoid_band_v0.1",
+    )
     assert a.skip == b.skip
     assert a.skipped_steps == b.skipped_steps
     assert a.skip_count == b.skip_count
@@ -466,7 +481,9 @@ def test_different_seed_generally_differs():
     sched = _t_now_schedule(30)
     patterns = set()
     for seed in range(8):
-        pat = sp.generate_skip_pattern(sched, aggressiveness=0.6, skip_seed=seed)
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=0.6, skip_seed=seed, probability_model="sigmoid_band_v0.1",
+        )
         patterns.add(tuple(pat.skip))
     # Not all seeds collapse to the same pattern.
     assert len(patterns) > 1
@@ -474,7 +491,9 @@ def test_different_seed_generally_differs():
 
 def test_skipped_steps_are_one_based():
     sched = _t_now_schedule(30)
-    pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=3)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=1.0, skip_seed=3, probability_model="sigmoid_band_v0.1",
+    )
     for step_no in pat.skipped_steps:
         assert 1 <= step_no <= 30
         assert pat.skip[step_no - 1] is True
@@ -490,12 +509,15 @@ def test_exact_target_reachable():
     # Determine an achievable count first, then request it exactly.
     counts = set()
     for seed in range(30):
-        pat = sp.generate_skip_pattern(sched, aggressiveness=1.0, skip_seed=seed)
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=1.0, skip_seed=seed, probability_model="sigmoid_band_v0.1",
+        )
         counts.add(pat.skip_count)
     target = sorted(counts)[len(counts) // 2]  # a mid, reachable count
     pat = sp.generate_skip_pattern(
         sched, aggressiveness=1.0, skip_seed=100, exact_target=target,
         max_resample=200,
+        probability_model="sigmoid_band_v0.1",
     )
     assert pat.skip_count == target
 
@@ -503,7 +525,8 @@ def test_exact_target_reachable():
 def test_exact_target_impossible_no_raise():
     sched = _t_now_schedule(30)
     pat = sp.generate_skip_pattern(
-        sched, aggressiveness=0.5, skip_seed=1, exact_target=10 ** 6
+        sched, aggressiveness=0.5, skip_seed=1, exact_target=10 ** 6,
+        probability_model="sigmoid_band_v0.1",
     )
     # Returns the closest attainable, never raises. With 30 steps and
     # the window, cannot possibly reach a million.
@@ -514,10 +537,12 @@ def test_exact_target_impossible_no_raise():
 def test_exact_target_deterministic():
     sched = _t_now_schedule(30)
     a = sp.generate_skip_pattern(
-        sched, aggressiveness=0.7, skip_seed=42, exact_target=12
+        sched, aggressiveness=0.7, skip_seed=42, exact_target=12,
+        probability_model="sigmoid_band_v0.1",
     )
     b = sp.generate_skip_pattern(
-        sched, aggressiveness=0.7, skip_seed=42, exact_target=12
+        sched, aggressiveness=0.7, skip_seed=42, exact_target=12,
+        probability_model="sigmoid_band_v0.1",
     )
     assert a.skip == b.skip
 
@@ -527,7 +552,9 @@ def test_exact_target_deterministic():
 
 def test_expected_skips_equals_sum_p_eligible():
     sched = _t_now_schedule(30)
-    pat = sp.generate_skip_pattern(sched, aggressiveness=0.5, skip_seed=5)
+    pat = sp.generate_skip_pattern(
+        sched, aggressiveness=0.5, skip_seed=5, probability_model="sigmoid_band_v0.1",
+    )
     window_start, window_end = pat.skip_window
     n = pat.num_steps
     manual = sum(
@@ -544,7 +571,9 @@ def test_expected_skips_monotone_in_aggressiveness():
     sched = _t_now_schedule(30)
     prev = None
     for a in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
-        pat = sp.generate_skip_pattern(sched, aggressiveness=a, skip_seed=0)
+        pat = sp.generate_skip_pattern(
+            sched, aggressiveness=a, skip_seed=0, probability_model="sigmoid_band_v0.1",
+        )
         val = pat.expected_skips_before_streak
         if prev is not None:
             # Deterministic and strictly non-decreasing in a for this

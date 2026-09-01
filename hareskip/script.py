@@ -1481,15 +1481,21 @@ def _format_hareskip_estimate(aggressiveness) -> str:
     UI callback can never raise; falls back to a neutral hint.
     """
     try:
-        from .probability_models import get_model
+        from .probability_models import DEFAULT_PROBABILITY_MODEL, get_model
 
-        model = get_model("sigmoid_band_v0.1")
+        model = get_model(DEFAULT_PROBABILITY_MODEL)
         params = model.params_from_aggressiveness(float(aggressiveness))
-        return (
+        summary = (
             "`p_cap="
             f"{params['p_cap']:.2f}"
             f" z_enter={params['z_enter']:.2f}"
-            f" z_exit={params['z_exit']:.2f}`"
+        )
+        # The default monotone model has no falling edge, hence no z_exit.
+        z_exit = params.get("z_exit")
+        if z_exit is not None:
+            summary += f" z_exit={z_exit:.2f}"
+        return (
+            summary + "`"
             " — higher aggressiveness widens/raises the skip band."
         )
     except Exception:

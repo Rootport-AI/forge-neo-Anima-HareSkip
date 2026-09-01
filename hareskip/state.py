@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any, Optional
 
 from .constants import MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL, HARESKIP_MODES
+from .probability_models import DEFAULT_PROBABILITY_MODEL
 
 
 MODE_OFF = ""
@@ -275,7 +276,7 @@ class RuntimeState:
     hareskip_window_end: float = 0.95
     hareskip_zone_low: float = -4.0
     hareskip_zone_high: float = 0.0
-    hareskip_probability_model: str = "sigmoid_band_v0.1"
+    hareskip_probability_model: str = DEFAULT_PROBABILITY_MODEL
     hareskip_image_seed: Optional[int] = None
     # Manual Skip mode: raw comma-separated step text from the UI, and the
     # validated 1-based step list parsed from it at generation start (set in
