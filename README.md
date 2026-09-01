@@ -32,12 +32,24 @@ In HareSkip mode, `a` (0.0–1.0, default 0.5) controls how much of the trajecto
 
 Two dual-thumb range controls further shape the pattern in HareSkip mode. **Skip window (progress)** (default `(0.05, 0.95)`, range `0.0–1.0`) sets which fraction of the trajectory is eligible for skipping: a step at progress `idx/(steps-1)` is skip-eligible only inside the window, and steps outside are forced to full computation. The default reproduces the former ~5% end guards, but the control is WYSIWYG — setting it to `(0.0, 1.0)` makes *every* step (including the last) eligible, with no hidden last-step safety net (the first step still runs full in practice as an inference necessity, independent of this window). **Zone boundaries (logSNR proxy)** (default `(-4.0, 0.0)`, range `-8.0–+8.0`) sets the `(low, high)` `z` cutoffs for the danger/middle/safe max-skip-streak zones, so you can retune how aggressively consecutive skips are pruned per trajectory region. Both use `gradio_rangeslider`'s dual-thumb slider when available and degrade to plain start/end (and low/high) sliders when it is not — see the Install requirements note below.
 
+## Max Skip Streak Sliders
+
+Each of the three trajectory zones (danger/middle/safe) has its own slider, right below the zone boundaries, for how many consecutive steps in that zone may be skipped in a row before one is forced back to full computation. Defaults are `1`/`2`/`3`; the range goes up to `10`. Setting a zone's slider to `0` means that zone is never skipped at all — every step there runs full, regardless of the skip probability. The extension deliberately does not fence these in further: you can push them into territory that clearly hurts image quality if you want to explore it.
+
+## Estimated Skip Count
+
+The Markdown line under the HareSkip controls previews roughly how many steps your current settings (aggressiveness, skip window, zone boundaries, streak limits, probability model, exact target) would skip, against a frozen 30-step reference schedule — it updates live as you adjust the sliders. This number is a **preview only**: it is computed against a fixed reference trajectory, not your actual sampler/scheduler/shift/step count, so treat it as a ballpark rather than a guarantee for your own run.
+
+## Debug Accordion: Exact Skip Target and Probability Model
+
+Two more HareSkip-mode controls live in the Debug accordion (which also holds the diagnostics-log settings): **Exact skip target** (default `0` = off) forces the generated pattern to hit an exact skip count instead of a probabilistic one — the generator re-rolls internally until it lands on that count, or (if the target is unreachable given your other settings) falls back to the closest count it found, without ever erroring out. **Probability model** lets you pick which skip-probability formula drives the pattern, including switching back to the extension's original formula for exact reproduction of older images.
+
 ## Infotext Key Scheme
 
 PNG infotext / metadata keys are namespaced by which layer produced them:
 
 - `HareSkip enabled`, `HareSkip mode` — extension on/off and the active mode.
-- `Hare ...` — HareSkip-mode-only fields (method, method_version, aggressiveness, skip_window, zone_boundaries, params, skipped_steps, skip_count, skip_seed, skip_seed_offset). Present only when HareSkip mode is active.
+- `Hare ...` — HareSkip-mode-only fields (method, method_version, probability_model, aggressiveness, skip_window, zone_boundaries, zone_streaks, params, skipped_steps, skip_count, skip_seed, skip_seed_offset, and `exact_target` when the Debug exact-target control is enabled). Present only when HareSkip mode is active.
 - `Tea ...` — TeaCache-mode-only fields (threshold, coefficient_profile, start/end percent, max_skip_streak, force_full_interval, etc). Present only when TeaCache mode is active.
 - `Manual skipped_steps` — Manual-Skip-mode-only field: the realized skipped steps (1-based, space-joined). Present only when Manual Skip mode is active.
 - `ResRefine ...` — residual-prediction fields, present regardless of mode.
@@ -54,7 +66,7 @@ Forge Neo can cache Gradio UI component defaults (slider ranges, default values,
 
 ## Status
 
-**Alpha.** The stochastic skip-density formula (`sigmoid_band_v0.1`) is the design spec's initial parameterization; it has not yet been validated against real generations. Live calibration of `aggressiveness -> actual skip count` (e.g. confirming `a=0.5` lands near 10 skips and `a=1.0` near 15 skips out of 30 steps, and confirming the sign/direction of the logSNR proxy against the real sampler schedule) happens on a separate verification machine with a working Forge Neo + GPU setup, not in this development environment. See `docs/HareSkip-design.md` for the full design rationale and `hareskip/skip_pattern.py` / `hareskip/probability_models.py` for the implementation.
+**Alpha.** The default stochastic skip-density formula (`monotone_saturate_v0.1`) reflects a stage-4 recalibration against real generations (see `docs/SPEC-alpha.md` §4.2). `sigmoid_band_v0.1`, the design spec's original parameterization, and its recalibrated sibling `sigmoid_band_v0.2` remain registered and selectable from the Debug accordion. Real-machine verification of new UI controls (streak sliders, estimated skip count, exact target, model selector) against a working Forge Neo + GPU setup is still pending as changes land — check `CHANGELOG.md` for what has and hasn't been confirmed on real hardware. See `docs/HareSkip-design.md` for the full design rationale and `hareskip/skip_pattern.py` / `hareskip/probability_models.py` for the implementation.
 
 ## Compatibility
 

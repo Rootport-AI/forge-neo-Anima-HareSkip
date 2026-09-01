@@ -89,7 +89,7 @@ Manual Skip モード専用の infotext キーは最小限の2つのみとする
 - **`hareskip/constants.py`**:
   - `MODE_MANUAL = "Manual Skip"` を追加。
   - `HARESKIP_MODES` を `[MODE_HARESKIP, MODE_TEACACHE, MODE_MANUAL]` の3要素にする。
-  - `UI_ARG_ORDER` に `manual_skip_steps` を追加し、末尾に append する（既存の位置は不変というリポジトリの既存規律を踏襲）。現行 33 引数 → **34 引数**になる。`EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)` は自動追従する。
+  - `UI_ARG_ORDER` に `manual_skip_steps` を追加し、末尾に append する（既存の位置は不変というリポジトリの既存規律を踏襲）。現行 33 引数 → **34 引数**になる。`EXPECTED_UI_ARG_COUNT = len(UI_ARG_ORDER)` は自動追従する。（2026-09-01 に末尾5引数追加で39になった。詳細は `docs/SPEC-alpha.md` §3.4）
 - **`hareskip/state.py`**:
   - `RuntimeState` に `manual_skip_steps: str` フィールドを追加（UI からの生テキストをそのまま保持）。
   - `RuntimeState.apply_options` の位置引数シグネチャに `manual_skip_steps: str = ""` を末尾追加（`UI_ARG_ORDER` の並びと1:1で一致させる）。

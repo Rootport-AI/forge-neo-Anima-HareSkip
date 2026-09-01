@@ -1,11 +1,11 @@
 # HareSkip α版 統合仕様書（要件定義・設計・仕様）
 
-- 作成日: 2026-07-10（α+1・Manual Skip mode 追加後に更新）
-- HEAD コミット: `a67f5594602083a50d23c3966542290f0ab78e43`
-- 対象: HareSkip 0.1.0（α版＋α+1、Forge Neo 拡張、Anima base 向けステップスキップ推論）
+- 作成日: 2026-07-10（α+1・Manual Skip mode 追加後に更新。2026-09-01 に HareSkip v0.2（monotone 既定化・streak スライダー・推定本数表示・exact-target 欄）反映のため更新）
+- HEAD コミット: `f16ccadb61a455a4614f0f24fc330a395261abbd`
+- 対象: HareSkip 0.1.0（α版＋α+1＋v0.2、Forge Neo 拡張、Anima base 向けステップスキップ推論）
 - 設計正典: [`docs/HareSkip-design.md`](HareSkip-design.md)（本書はこれを参照し、内容を重複させない）
 
-本書は要件定義・アーキテクチャ設計・仕様を 1 本にまとめた統合資料である。すべての数値・キー名・関数名はリポジトリの実コード（`hareskip/*.py`, `tests/*`, HEAD=`a67f559`）で確認した値を記載する。計画書と実装が食い違う箇所は実装を正とし、§5 に明記する。
+本書は要件定義・アーキテクチャ設計・仕様を 1 本にまとめた統合資料である。すべての数値・キー名・関数名はリポジトリの実コード（`hareskip/*.py`, `tests/*`, HEAD=`f16ccad`）で確認した値を記載する。計画書と実装が食い違う箇所は実装を正とし、§5 に明記する。
 
 ---
 
@@ -31,7 +31,7 @@ S:\30_OriginalApps\16_HareSkip\ER SDE-Beta 30steps Shift3
 上記結論から、HareSkip（High-Adaptive Regime-based Extrapolation Skip）は以下を採用する。
 
 - **確率的スキップ密度**: 軌道座標 `z`（logSNR proxy）上の滑らかな確率密度 `p_skip(z; a)` から skip step を抽選する。硬い段差状の位相境界で決めない。
-- **ゾーン依存 max skip streak**: 序盤・中盤・終盤の位相分類は確率ではなく「連続スキップ長の上限」に使う。danger / middle / safe の 3 ゾーンで許容 streak を変える（旧 final ゾーンは 2026-07-10 に廃止、§4.3 参照）。生成終盤の減速は skip-probability taper が担う。
+- **ゾーン依存 max skip streak**: 序盤・中盤・終盤の位相分類は確率ではなく「連続スキップ長の上限」に使う。danger / middle / safe の 3 ゾーンで許容 streak を変える（旧 final ゾーンは 2026-07-10 に廃止、§4.3 参照）。生成終盤の減速は **skip window**（§4.4）が担う（2026-09-01 裁定。既定確率モデル `monotone_saturate_v0.1` は立ち下がり項を持たない。旧 `sigmoid_band_v0.*` の taper 項は §4.2 参照）。
 - **ガチャ前提の分布平均での優位性**: pattern は stochastic に生成され、同じ条件でも生成ごとに少し異なる。単発ベストではなく「分布として平均的に安全」を狙う。`skip seed offset` により同一画像 seed のまま pattern を引き直せる。
 
 top-K の deterministic 選択、prompt/seed 過適合、軽量 NN 生成は不採用（設計書 §基本方針を参照）。
@@ -52,7 +52,7 @@ top-K の deterministic 選択、prompt/seed 過適合、軽量 NN 生成は不�
 | F-6 | 確率式は**差し替え可能**。`probability_models` レジストリに新モデルを登録するだけで pattern/streak/guard 機構に触れずに交換できる。 |
 | F-7 | TeaCache モードの数値挙動は旧 UjiCache と**ビット同一**（リネームのみ）。 |
 | F-8 | **後方互換なし**。UjiCache 命名・レガシーメタデータ（`_clear_legacy_ujicache_metadata`）は削除。 |
-| F-9 | exact-target skip mode は純粋モジュール API とテストにのみ存在し、**UI に露出しない**。 |
+| F-9 | exact-target skip mode は純粋モジュール API（`generate_skip_pattern(exact_target=...)`）として存在し、**2026-09-01 の裁定変更により** Debug アコーディオンの任意項目 `Exact skip target (0 = off)`（`gr.Number`、既定 0 = 無効）として UI にも露出する。到達不能な target でも例外は投げない（最近傍を返す）。 |
 
 ### 2.2 非機能要件
 
@@ -107,7 +107,7 @@ else:  # MODE_TEACACHE
 - `_hareskip_ensure_pattern()` が生成開始時に `STATE.hareskip_schedule_t_now` と `STATE.hareskip_image_seed` から `SkipPattern` を一括生成し `STATE.hareskip_pattern` にキャッシュ。
 - **取得失敗時は劣化**: スケジュール or image seed 欠落なら `None` を返し、`_hareskip_should_calc` はフル演算扱い。`hareskip_schedule_unavailable`（`reason=no_schedule_or_seed`）を 1 回だけ警告。
 
-### 3.4 34 引数 3 点同期
+### 3.4 39 引数 3 点同期
 
 UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argument Sync Rule」）。
 
@@ -115,7 +115,9 @@ UI 引数は 3 箇所で 1:1 に一致させる（AGENTS.md「3-Point UI Argumen
 2. `RuntimeState.apply_options` の位置引数シグネチャ（順序・数）
 3. `constants.UI_ARG_ORDER`（正典の順序付き名前リスト）と `EXPECTED_UI_ARG_COUNT`（= `len(UI_ARG_ORDER)`）
 
-現在**34 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset`（α版）＋ `hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`（α+1、skip window / zone boundaries のスカラーミラー）＋ `manual_skip_steps`（Manual Skip mode の生テキスト、末尾追加）を追加。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
+現在**39 引数**。元 26 引数の位置は不変で、末尾に `hareskip_mode` / `hareskip_aggressiveness` / `hareskip_skip_seed_offset`（α版）＋ `hareskip_window_start` / `hareskip_window_end` / `hareskip_zone_low` / `hareskip_zone_high`（α+1、skip window / zone boundaries のスカラーミラー）＋ `manual_skip_steps`（Manual Skip mode の生テキスト、34 番目）を追加した上で、2026-09-01 に HareSkip v0.2 の 5 引数 `hareskip_streak_danger` / `hareskip_streak_middle` / `hareskip_streak_safe`（ゾーン別 streak 上限）・`hareskip_exact_target`（exact-target 数値欄）・`hareskip_probability_model`（確率モデル選択）を末尾へ追加した（既存 34 位置は不変）。`tests/test_arg_sync.py` が gradio/Forge を import せず静的に検証する。
+
+**旧 34 引数 payload の後方互換（2026-09-01〜）**: `script._apply_ui_args`（`constants.LEGACY_MIN_UI_ARG_COUNT = 34`）は、受け取った引数列の長さが `[LEGACY_MIN_UI_ARG_COUNT, EXPECTED_UI_ARG_COUNT)`（= 34〜38）のとき、末尾の不足引数を `apply_options` の既定値（streak 1/2/3・exact_target 無効・既定確率モデル。すなわち旧挙動と一致）で埋めて受理し、警告を 1 回だけ出す。34 未満は従来どおり `refresh_settings()` へフォールバックする。これにより、完了済みキャンペーンの実験ツール（34 要素固定 payload）を無改変のまま再実行できる。
 
 **Skip window / Zone boundaries の UI 配線（α+1）**: `gradio_rangeslider.RangeSlider`（Forge neo core が `==0.0.8` を同梱）が import 可能なら 2 本の dual-thumb RangeSlider（`hare-skip-window`, `hare-zone-boundaries`）を可視入力ウィジェットとして置き（**return list には入れない**）、その `.change`（`lambda t: (t[0], t[1])`）で `visible=False` の 4 スカラー `gr.Number` ミラーを更新する。RangeSlider が無い環境では、この 4 コンポーネント**自体**を可視の `gr.Slider`（start/end/low/high）フォールバックとして生成する（同一変数名・同一位置）。どちらの経路でも return list に入るのは 4 スカラーのみで、これらの位置は不変（末尾の `manual_skip_steps` は 34 番目として更に後ろに追加）。
 
@@ -132,7 +134,31 @@ z = 2 * ln((1 - t) / t)
 
 生成が進む（`t_now` 降順）ほど z は増加する。実装は `skip_pattern.logsnr_proxy_from_t_now`。
 
-### 4.2 p_skip 式と aggressiveness 写像（`sigmoid_band_v0.1`）
+### 4.2 p_skip 式と aggressiveness 写像（3 モデル）
+
+確率式は `hareskip/probability_models.py` のレジストリに差し替え可能な形で登録されている（F-6）。`generate_skip_pattern(..., probability_model=<name>)` で選択し、既定は `DEFAULT_PROBABILITY_MODEL`。`METHOD_NAME = "HareSkipStochasticDensity"`、`METHOD_VERSION = "0.1"`（モデル名とは別軸で据え置き。2026-09-01 裁定 — 過去画像比較の混乱を避けるため）。
+
+#### `monotone_saturate_v0.1`（既定、2026-09-01〜）
+
+```
+p_skip(z; a) = p_cap * sigmoid((z - z_enter) / tau_enter)
+```
+
+`a ∈ [0, 1]`（スライダー、既定 0.5）を `[0, 1]` にクランプした上で:
+
+| パラメータ | 式 | a=0.0 | a=0.5 | a=1.0 |
+| --- | --- | --- | --- | --- |
+| `p_cap` | `0.5049 + 0.3975·a + 0.0255·a²` | 0.5049 | 0.710025 | 0.9279 |
+| `z_enter` | `−0.0068 − 10.2115·a^1.690` | −0.0068 | −3.171619 | −10.2183 |
+| `tau_enter` | `1.20`（定数） | 1.20 | 1.20 | 1.20 |
+
+実装は `probability_models.MonotoneSaturateV0_1`。返り値は `[0, 1]` にクランプ。
+
+**立ち下がり項が無い理由（2026-09-01 裁定）**: `sigmoid_band_v0.*` が持つ「`z_exit`/`tau_exit` による下降シグモイド」の乗算項がここには無い。終盤スキップの実害は「DiT フル演算による修復の不足」であり、これを守るのは確率式ではなく §4.4 の **skip window** の責務、というのがユーザー裁定の理由。第4段階の実測でも band 型と monotone 型は差がない（135ペア中110ペアが同一パターン、差分25ペアの差中央値+0.004）ため、確率式は絶対 z のみに依存する単調飽和型へ純化されている（判別軸を絶対 z 一本に保つのは、進行度など第2軸を入れると30ステップ固定データへ過学習するのを避けるため）。
+
+**較正正典**: `experiment-HareSkip/v02-proposal/r2/derivation_r2.json` の `final_params.mono_r2`（第4段階再較正キャンペーン、2026-07〜09）。既定の skip window・ゾーンstreak上限のもとで、参照スケジュール Beta 30-step（Shift 3、§4.8 参照）では a=0.2 → 約5本 / a=0.55 → 約10本 / a=0.9 → 約15本のスキップになる。
+
+#### `sigmoid_band_v0.1`（旧既定、不変）
 
 ```
 p_skip(z; a) = p_cap
@@ -140,7 +166,7 @@ p_skip(z; a) = p_cap
              * sigmoid((z_exit - z) / tau_exit)
 ```
 
-`a ∈ [0, 1]`（スライダー、既定 0.5）を `[0, 1]` にクランプした上で:
+`a ∈ [0, 1]` を `[0, 1]` にクランプした上で:
 
 | パラメータ | 式 | a=0.0 | a=0.5 | a=1.0 |
 | --- | --- | --- | --- | --- |
@@ -150,7 +176,21 @@ p_skip(z; a) = p_cap
 | `z_exit` | `4.2 + 1.0·a` | 4.20 | 4.70 | 5.20 |
 | `tau_exit` | `0.45`（定数） | 0.45 | 0.45 | 0.45 |
 
-実装は `probability_models.SigmoidBandV0_1`。返り値は `[0, 1]` にクランプ。`METHOD_NAME = "HareSkipStochasticDensity"`、`METHOD_VERSION = "0.1"`。
+実装は `probability_models.SigmoidBandV0_1`。返り値は `[0, 1]` にクランプ。α版の設計仕様初期値そのままで**書き換えない**（Debug アコーディオンでこのモデルを選び、streak 既定・exact_target=0 にすると旧画像を再現できる）。
+
+#### `sigmoid_band_v0.2`（r2 較正、A/B・巻き戻し用）
+
+`sigmoid_band_v0.1` と同じ式形（上昇×下降のシグモイド積）で、`params_from_aggressiveness` のみ再較正:
+
+| パラメータ | 式 | a=0.0 | a=0.5 | a=1.0 |
+| --- | --- | --- | --- | --- |
+| `p_cap` | `0.5419 + 0.3427·a + 0.0510·a²` | 0.5419 | 0.726 | 0.9356 |
+| `z_enter` | `−0.0068 − 10.2115·a^1.690`（monotone と共有） | −0.0068 | −3.171619 | −10.2183 |
+| `tau_enter` | `1.20`（定数） | 1.20 | 1.20 | 1.20 |
+| `z_exit` | `4.94 + 1.00·a` | 4.94 | 5.44 | 5.94 |
+| `tau_exit` | `0.81`（定数） | 0.81 | 0.81 | 0.81 |
+
+実装は `probability_models.SigmoidBandV0_2`。較正正典は同じ `derivation_r2.json` の `final_params.v02_r2`。既定モデルではなく、A/B 比較や巻き戻しのために登録されている。
 
 ### 4.3 ゾーン境界と max skip streak（3 ゾーンモデル）
 
@@ -164,7 +204,11 @@ p_skip(z; a) = p_cap
 
 実装は `skip_pattern.zone_from_z(z, boundaries=(low, high))` と `ZONE_MAX_STREAK`。`apply_max_streak_constraint(skip, z, p, zone_boundaries)` が境界を受け取る。**上限は各ステップが自分のゾーンのものを使う**（run 単位の `min` ではない。2026-08-03 変更、§4.5 参照）。境界の正規化（`[−8, 8]` クランプと `low ≤ high` の swap）は `apply_options` の責務。
 
+**streak 上限は UI から変更可能（2026-09-01〜）**: `ZONE_MAX_STREAK` は各ゾーン用の HareSkip モード内スライダー（`hareskip_streak_danger` / `middle` / `safe`、UI レンジ 0〜10、既定 1/2/3）で上書きでき、`0` を指定するとそのゾーンは**常にフル計算**になる（刈り込みの `counter >= allowed` が `allowed = 0` で即時成立するため、追加ロジック不要）。「フールプルーフ不要・ユーザーが破壊的領域を試せる」方針の裁定により、上限超えの入力（例えば N=20 狙いでの緩和）も許容される。定数 `ZONE_MAX_STREAK` はモジュールの既定値・テスト参照用に存置される。関数シグネチャは `apply_max_streak_constraint(skip, z_by_step, p_by_step, zone_boundaries, zone_max_streak=None)`（`None` の場合に定数を使う）と `generate_skip_pattern(..., zone_max_streak=None)`。STATE 側は `RuntimeState.hareskip_zone_max_streak()`（辞書化）と `hareskip_pattern_kwargs()`（生成呼び出し向けにまとめたキーワード引数一式）で集約される。
+
 > **2026-07-10 更新 — final ゾーン廃止**: α版実装は当初 `docs/HareSkip-design.md` §rough zone と max skip streak に従い danger/middle/safe/final の 4 ゾーン（`final: z ≥ 4`, max streak 1、「最終仕上げ保護」）を実装していた。ユーザーの本来の意図は序盤・中盤・終盤の **3 phase** streak モデルであり、生成終盤の減速は `probability_models.py` の skip-probability taper（`z_exit` / `tau_exit` による確率の絞り込み）**のみ**で担う設計だった。2026-07-10 の層別再分析で、アーカイブデータに見えた「final 帯域での密度低下」が選択バイアスであったと判明した: 較正プール（`ER SDE-Beta 30steps Shift3`）は daraskme 74% / Uji 26% の構成で、z ≥ 4 に到達する係数は daraskme 側にしか出現しない。daraskme に層別した上で密度を見ると final 帯域での低下は消える。また、条件を揃えた step-effect 比較では、step25 の skip はどの条件でも LPIPS を改善しており、「終盤は危険」という根拠にならない。したがって final ゾーン（と streak=1 の追加制約）には定量的な裏付けが無いと判断し、danger/middle/safe の 3 ゾーンに統合した（`safe` は `z ≥ 0` に拡張、旧 `z ≥ 4` の境界は消滅）。skip-probability taper は温存するが、**その較正方法自体は現行データでは正当化できず、再較正が必要**（`docs/archive/HANDOFF-next-session.md` §4 参照）。これは `docs/HareSkip-design.md` §rough zone と max skip streak からの**意図的な逸脱**であり、設計正典は書き換えず本書に差異として記録する。
+>
+> **2026-09-01 更新 — 終盤減速の責務は skip window へ**: 上記時点では終盤減速を確率式の taper（`z_exit`/`tau_exit`）が担う設計だったが、第4段階の再較正で band 型（taper あり）と monotone 型（taper なし）が実測差なしと判明したため、責務は §4.4 の skip window に一本化された。既定モデル `monotone_saturate_v0.1` は立ち下がり項を持たない（§4.2 参照）。`sigmoid_band_v0.1` は taper 込みのまま不変で残り、旧画像再現に使う。
 
 ### 4.4 Skip window（旧ガード式を置換、α+1）
 
@@ -185,7 +229,7 @@ window 外のステップは強制フル（`p = 0.0`, `skip = False`）。既定
 
 1. 連続スキップ数のカウンタを 0 で始める。
 2. ステップ `k` を先頭から走査する。`skip[k]` が False なら（元からフルなので）カウンタを 0 に戻して次へ。
-3. `skip[k]` が True なら、**そのステップ自身のゾーン**の上限 `allowed = ZONE_MAX_STREAK[zone_from_z(z[k], boundaries)]` を取る。`counter >= allowed` ならそのステップをフル化（`skip[k] = False`）してカウンタを 0 に戻す。そうでなければスキップを維持してカウンタ +1。
+3. `skip[k]` が True なら、**そのステップ自身のゾーン**の上限 `allowed = zone_max_streak[zone_from_z(z[k], boundaries)]`（`zone_max_streak` 省略時は定数 `ZONE_MAX_STREAK`）を取る。`counter >= allowed` ならそのステップをフル化（`skip[k] = False`）してカウンタを 0 に戻す。そうでなければスキップを維持してカウンタ +1。`allowed = 0` の場合、カウンタは 0 開始で `0 >= 0` が直ちに成り立つため、そのゾーンのステップは常にフル化される（該当ゾーンでは一切スキップしない）。
 4. `p_by_step` はシグネチャ互換のため受け取るが、ステップ単位の規則にはタイブレークが不要なので未使用。
 
 > **2026-08-03 更新 — 塊単位 min 適用からステップ単位適用へ（ユーザー承認済み）**: 旧実装は「連続スキップの塊（run）ごとに、塊内ゾーンの `min` を許容 streak とし、`(p, z, index)` 最小のステップを 1 つずつフル化して再走査する」貪欲法だった。この規則は高確率域で破綻する: p が高いと全ステップが 1 つの run に融合し、その run が danger ステップを 1 つでも含むと許容が 1 に落ちて**スケジュール全域に danger 上限が適用される**。合成 30-step 降順スケジュールで全ステップ提案（p = 1.0 相当）した場合、刈り込み後のスキップ数は **3 本**まで崩壊した（ステップ単位で最適に刈れば 21 本）。aggressiveness を上げるほどスキップ数がむしろ減る非単調性を生み、v0.1 時代からの「a = 1.0 で目標 15 に届かない」問題の真因だった。新規則では各ステップが自分のゾーンの上限だけを見るため、danger ステップは自分の前後を短く切るだけで済み、崩壊が消える（同条件で 3 → 21 本、平坦 p 0.1〜1.0 の掃引で平均スキップ数が単調非減少になることを回帰テストで固定）。決定論・RNG 不使用・in place・関数シグネチャは従来どおり。影響範囲は HareSkip モードと exact-target の実現パターン（Manual Skip 経路は刈り込みを通らないため既存実験データの妥当性に影響なし）。`p_cap(a)` の再較正が必要。
@@ -205,16 +249,31 @@ skip_seed = int(sha256(f"{image_seed}|hareskip|{offset}").hexdigest(), 16) mod 2
 | モード/層 | キー |
 | --- | --- |
 | 共通（identity） | `HareSkip enabled`, `HareSkip mode` |
-| HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`（生成開始時）／`Hare skip_window`（例 `0.05-0.95`）, `Hare zone_boundaries`（例 `-4.0/0.0`）, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
+| HareSkip モードのみ | `Hare method`, `Hare method_version`, `Hare probability_model`, `Hare aggressiveness`, `Hare skip_seed_offset`, `Hare zone_streaks`（例 `1/2/3`、常時記録）（生成開始時）／`Hare skip_window`（例 `0.05-0.95`）, `Hare zone_boundaries`（例 `-4.0/0.0`）, `Hare params`, `Hare skipped_steps`, `Hare skip_count`, `Hare skip_seed`（`postprocess_image`）／`Hare exact_target`（`hareskip_exact_target > 0` のときのみ記録）／スケジュール失敗時のみ `Hare pattern = "unavailable"` |
 | TeaCache モードのみ | `Tea threshold`, `Tea progress`, `Tea coefficient_profile`, `Tea max_skip_streak`, `Tea force_full_interval`, `Tea shift`, `Tea modulated_source`, `Tea capture_pairs`, `Tea auto_row_index`, `Tea auto_row_name`（生成開始時）／`Tea skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`。`Manual skipped_steps` / `Hare skipped_steps` と同じ表記規約） |
 | Manual Skip モードのみ | `Manual skipped_steps`（実現値。1始まりステップ番号をスペース区切り、`postprocess_image`） |
 | 共通（両モード） | `ResRefine formula`（＋非 Reuse 時 `ResRefine use_prediction_after_progress`, `ResRefine apply_prediction_from_skip`, `ResRefine prediction_strength`, `ResRefine slope_ema_smoothing`, `ResRefine curve_ema_smoothing`／Taylor2 時 `ResRefine taylor2_curve_strength`） |
+
+`Hare probability_model` の既定値は 2026-09-01 以降 `monotone_saturate_v0.1`（旧既定 `sigmoid_band_v0.1`）。旧 infotext の `sigmoid_band_v0.1` を PNG Info → Send to txt2img で読み込んだ場合はそのまま `sigmoid_band_v0.1` が復元され、未知のモデル名（将来の破棄・改名など）が来た場合は既定モデルへ例外なくフォールバックする。
 
 **ステップ番号は 1 始まりで統一**: ログ・infotext のユーザー可視ステップ表記はすべて 1 始まりで Forge の `Sampling steps` 数と一致する（例 `step=10/30`、`Manual skipped_steps = 10 12`）。内部インデックスは 0 始まりで格納し、出力時にのみ `+1` 変換する（表示を直すために格納表現を変えない）。2026-07-13（`5c20835`）に `hareskip_call=` / `hareskip_step=` / `hareskip_summary=` の残る0始まり表記箇所を共通ヘルパ `_fmt_step_display`（`STATE.generation_steps` 既知なら `{n+1}/{total}`、未知なら `{n+1}`）で統一。同コミットで decision reason も整理: Manual Skip の通常フル演算は `reason=manual_full`（従来 Tea 専用語彙の `threshold` に誤フォールバックしていた）、`_hareskip_log_call` は明示 reason 引数を先頭に置き ResRefine スロット理由をその後に付す（例 `reason=manual,0:formula,1:formula`）。
 
 verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / skip をコンソール出力。パターン一括生成時は `hareskip_pattern=` サマリを 1 行出力。
 
 **防御的パッチング（2026-07-13, `28d24ee`）**: UjiCache 等、同一 `Anima.forward` を patch する他拡張と共存した場合、そちらの patch がこちらの wrapper を上書き・teardown 時に上書きしたまま自身の保存 original を setattr する事故が起こり得る（`model_calls=0` として観測される）。対策として `STATE.patches[kind]` に wrapper/cls/attr を保持し、apply 時に整合性チェック（wrapper が入れ替わっていれば `hareskip_patch_clobbered` を警告し自己修復・再適用）、remove 時のガード（自分の wrapper が入っていなければ `hareskip_patch_not_ours` を警告しレジストリのみ破棄、他拡張の patch には触れない）を実装。`is_patch_installed()`（wrapper 同一性チェック）を追加し診断表示の `active=` フィールドに使用（`is_patched()` はレジストリ所属のみを見る軽量版として存置）。`log_timing_summary` に zero-execution 検出（`hareskip_enabled` かつ `denoiser_calls>0` だが `model_calls==0` の場合に `hareskip_patch_never_ran` を警告）を追加。
+
+### 4.8 推定スキップ本数の表示（2026-09-01〜）
+
+HareSkip モードの Markdown 表示（`hareskip_estimate_md`）は、a・skip window・ゾーン境界・streak 上限・確率モデル・exact_target の現在値から**推定スキップ本数**を算出して表示する。
+
+- **参照スケジュールの出所と凍結**: `hareskip/reference_schedule.py` の `REFERENCE_T_NOW`（30 値）は `experiment-HareSkip/v02-proposal/r2/derivation_r2.json` の `["trajectory"]`（ER SDE-Beta 30-step, Shift 3.0 の `t_now` 列、monotone-r2 較正で使用したもの）を 9 桁に丸めて転記した凍結値。`REFERENCE_SCHEDULE_LABEL = "Beta 30-step (Shift 3)"` として表示に必ず併記する。stdlib のみ（Forge/gradio/numpy/torch 非依存）。
+- **決定論 32 シード Monte Carlo**: `_estimate_skip_count` が `_HARE_ESTIMATE_SEEDS = 32` 本の固定シード列（`seed = 1 + i·7919`）で `REFERENCE_T_NOW` に対し `generate_skip_pattern` を回し、`skip_count` の平均を取る。同じ設定値なら常に同じ数字になる（実測 32 draws ≈ 1.7ms）。
+- **整数丸め**: 平均は `int(round(mean))` で本数へ、`round(100 * count / REFERENCE_NUM_STEPS)` で概算時短％へ丸める。
+- **exact_target 有効時は MC を回さず短絡**: `hareskip_exact_target > 0` のとき `_estimate_skip_count` は即座に `float(exact_target)` を返す（`generate_skip_pattern` を呼ばない）。`generate_skip_pattern(exact_target=...)` 自体が再抽選で目標値に一致させるため、表示側で再現する必要がない。
+- **表示専用・生成経路に影響しない**: この参照スケジュールとその上の Monte Carlo 平均は UI プレビューのみに使われ、実際の生成（`patcher.py` が捕捉する実スケジュールの `t_now`）には一切フィードバックされない。
+- **実運用スケジュールとの差に注意**: 実際のサンプラー／スケジューラ／shift／step 数が参照（Beta 30-step, Shift 3）と異なる場合、表示される本数は目安に過ぎない。表示文言には常に `REFERENCE_SCHEDULE_LABEL` を含め、参照との相違を示す。TODO: 実運用スケジュールが既知の場面（生成直前など）向けに、実スケジュールでの再推定を検討する。
+
+出力は2行の Markdown（`_format_hareskip_estimate`）: 1行目が `**≈N skips / 30 steps**（約M%時短、Beta 30-step (Shift 3) 基準・32シード平均）`（exact_target 有効時は「exact target」表記）、2行目が `` `model=... p_cap=... z_enter=... tau_enter=...`` （立ち下がりを持つモデルのみ `z_exit=...` を追加）。不正入力（未知モデル名、逆転した window/ゾーン、範囲外の streak・exact_target）は既存の正規化ヘルパ（`_clamp_float` / `_normalize_range` / `_clamp_int_default`）で丸め込んだ上で計算するため例外を出さず、万一の失敗時は broad `try/except` で `` `skip estimate unavailable` `` にフォールバックする。
 
 ---
 
@@ -231,7 +290,7 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 
 3. **prompt 依存の致命ステップは検出不能**: 本手法は軌道座標のみに依存し、prompt に依存する致命ステップは検出できない。streak 制約とガードで緩和するのみ。
 
-4. **exact-target mode は API のみ**: `generate_skip_pattern(exact_target=...)` はテストと API に存在するが UI 露出なし（ユーザー決定）。到達不能な target でも例外を投げず最近傍を返す。
+4. **exact-target mode（2026-09-01 更新 — Debug アコーディオンに露出）**: `generate_skip_pattern(exact_target=...)` はテストと API に存在し、2026-07-10 時点では UI 非露出だったが、2026-09-01 の裁定変更により Debug アコーディオンの任意数値欄 `Exact skip target (0 = off)`（既定 0 = 無効）として露出している。`hareskip_exact_target` は `apply_options` を経由し `RuntimeState.hareskip_pattern_kwargs()` で `exact_target or None` として `generate_skip_pattern` に渡る。到達不能な target でも例外を投げず最近傍を返す（この挙動自体は変更なし）。有効時のみ infotext `Hare exact_target` に記録される。
 
 5. **calibration_capture.py の JSONL ヘッダのネスト未整理（軽微）**: `_build_header` の出力構造がネスト整理されていない。TeaCache デバッグ機能であり動作に支障はない。
 
@@ -244,7 +303,7 @@ verbose_trace 有効時はステップ毎に `hareskip_step=` で z_i / p_i / sk
 - step 間隔補正 `Δz`（不均一なステップ間隔への補正）。
 - ゾーン境界 / streak の条件依存化（sampler / scheduler / shift ごとの調整）。**2026-07-29 更新 — Shift依存化が必要と実証された**: Shift転移スポットチェック（ER SDE-Beta、z軸オーバーレイ分析、出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-29エントリ）により、中心仮説「損傷は z（logSNR）だけの関数」は素直には成立しないと判明した。Shift変換によるΔz（=2·ln(shift比)、Shift 3→1 で +2.1972）は全ステップ一様なオフセットとして解析的に説明できるが、それを補正してもなお**損傷カーブの急峻さ自体がShiftで変化する**: z<0（danger側）ではShift=1の損傷がShift=3カーブの中央値の1.3〜1.7倍、z>0（safe側）では0.3〜0.6倍にとどまる。skip軸（ステップ位置そのもの）で比較しても重ならないため、「z整列＋横ずらし」では吸収できない。実用方向の含意: **低Shiftで運用するほど序盤（danger側）の保護を強める方向の較正が安全**。ゾーン境界の単純な平行移動では不十分な可能性があり、Shift別のゾーン境界較正が今後の課題として残る。
 - `p_cap` / `z_enter` の較正手順の確立（実機での a → skip 数較正）。
-- 確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。
+- ~~確率モデルの対抗仮説 `monotone_saturate`（単調飽和型）の A/B 比較（レジストリ登録で機構変更不要）。~~ **2026-09-01 完了**: 第4段階の実測（135ペア中110ペアが同一パターン、差分25ペアの差中央値+0.004）で band 型と実測差なしと確認され、`monotone_saturate_v0.1` が新既定になった（§4.2）。`sigmoid_band_v0.1`／`sigmoid_band_v0.2` はレジストリに残り A/B・巻き戻しに使える。
 - **streak項について（2026-07-29 更新 — 予測式には不要と確定）**: 第3段階 out-of-sample 検証（凍結事前予測表と実測の照合、出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-29エントリ）で、streak項を加えた対照式はプールでΔρ=−0.049（事前登録基準の+0.02未満を満たさず）となり、**streak項は品質順位の予測式には不要と結論**した。第2段階 in-sample でEuler-Betaにのみ見えていた+0.046の改善は、out-of-sampleでは再現せず符号反転しており過学習と判明。ただし、ゾーン別 max skip streak 制約（§4.3・§4.5 の実装済みガード機構）は予測式とは別の役割（実行時の連続スキップ長そのものの制約）を持ち、第2段階の実測（アンカー幅の5〜15%の微小だが実在するペナルティ）に基づき維持する。
 - **probability_models 再較正について（2026-07-29 更新 — 較正に必要な実測データが揃った）**: 単発29位置×45条件（第1段階）、相互作用28パターン×45条件（第2段階）、out-of-sample 450点（第3段階）、±1ステップアンカー90点、いずれも固定コミット`b6164214`製の実測データが揃った（出典 `docs/recalibration-2026-07/REPORT.md` および `experiment-HareSkip/EXPERIMENT-LOG.md` 2026-07-27〜29の各エントリ）。予測式（単発損傷の和＋飽和リンク、調整項2個）は事前登録基準（プールSpearman ρ≥0.8）に対しρ=0.930で合格した。実装規律は従来どおり: `sigmoid_band_v0.1` は書き換えず、較正結果を反映する場合は新バージョン（例 `sigmoid_band_v0.2`）を `probability_models.py` レジストリに登録して切り替える（下記末尾の記述を参照）。
 - 再キャリブレーション実験計画は `docs/archive/HANDOFF-next-session.md` §4.5 参照（実験計画の正典は移管済み。§4.5 冒頭の移管注記のとおり `experiment-HareSkip/EXPERIMENT-PLAN.md` を参照。実験の総括は `docs/recalibration-2026-07/REPORT.md`）。
