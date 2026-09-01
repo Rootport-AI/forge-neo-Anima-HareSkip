@@ -44,6 +44,12 @@ from .probability_models import (
     METHOD_VERSION,
     PROBABILITY_MODELS,
 )
+from .reference_schedule import (
+    REFERENCE_NUM_STEPS,
+    REFERENCE_SCHEDULE_LABEL,
+    REFERENCE_T_NOW,
+)
+from .skip_pattern import generate_skip_pattern
 from .state import (
     MODE_OFF,
     MODES,
@@ -61,6 +67,9 @@ from .state import (
     tea_coefficients_for_profile,
     tea_expected_shift_for_profile,
     tea_window_for_profile,
+    _clamp_float,
+    _clamp_int_default,
+    _normalize_range,
 )
 from .timing import start_sampling
 
@@ -142,16 +151,6 @@ class Script(scripts.Script):
                     hareskip_zone_high = gr.Number(
                         value=0.0, visible=False, elem_id="hare-zone-high"
                     )
-                    hareskip_window_range.change(
-                        fn=lambda t: (t[0], t[1]),
-                        inputs=[hareskip_window_range],
-                        outputs=[hareskip_window_start, hareskip_window_end],
-                    )
-                    hareskip_zone_range.change(
-                        fn=lambda t: (t[0], t[1]),
-                        inputs=[hareskip_zone_range],
-                        outputs=[hareskip_zone_low, hareskip_zone_high],
-                    )
                 else:
                     hareskip_window_start = gr.Slider(
                         label="Skip window (progress) start",
@@ -218,7 +217,7 @@ class Script(scripts.Script):
                 )
 
                 hareskip_estimate_md = gr.Markdown(
-                    value=_format_hareskip_estimate(0.5),
+                    value=_format_hareskip_estimate(),
                     elem_id="hare-estimate",
                 )
 
@@ -501,11 +500,100 @@ class Script(scripts.Script):
                 inputs=[hareskip_mode],
                 outputs=[hareskip_mode_group, teacache_mode_group, manual_mode_group],
             )
-            hareskip_aggressiveness.change(
+            # --- Live skip-count estimate ------------------------------
+            # Every control that feeds generate_skip_pattern re-renders the
+            # estimate through one shared 10-input handler. Sliders use
+            # .release (not .change) so dragging does not fire per pixel;
+            # Number/Dropdown use .change.
+            _hare_estimate_inputs = [
+                hareskip_aggressiveness,
+                hareskip_window_start,
+                hareskip_window_end,
+                hareskip_zone_low,
+                hareskip_zone_high,
+                hareskip_streak_danger,
+                hareskip_streak_middle,
+                hareskip_streak_safe,
+                hareskip_probability_model,
+                hareskip_exact_target,
+            ]
+            for _hare_slider in (
+                hareskip_aggressiveness,
+                hareskip_streak_danger,
+                hareskip_streak_middle,
+                hareskip_streak_safe,
+            ):
+                _hare_slider.release(
+                    fn=_hareskip_estimate_updates,
+                    inputs=_hare_estimate_inputs,
+                    outputs=[hareskip_estimate_md],
+                )
+            hareskip_probability_model.change(
                 fn=_hareskip_estimate_updates,
-                inputs=[hareskip_aggressiveness],
+                inputs=_hare_estimate_inputs,
                 outputs=[hareskip_estimate_md],
             )
+            hareskip_exact_target.change(
+                fn=_hareskip_estimate_updates,
+                inputs=_hare_estimate_inputs,
+                outputs=[hareskip_estimate_md],
+            )
+            if RangeSlider is not None:
+                # Dual-thumb path: mirror each RangeSlider into its hidden
+                # gr.Number pair AND refresh the estimate in the same call,
+                # rather than depending on the hidden mirrors re-firing.
+                hareskip_window_range.change(
+                    fn=_hareskip_window_range_updates,
+                    inputs=[
+                        hareskip_window_range,
+                        hareskip_aggressiveness,
+                        hareskip_zone_low,
+                        hareskip_zone_high,
+                        hareskip_streak_danger,
+                        hareskip_streak_middle,
+                        hareskip_streak_safe,
+                        hareskip_probability_model,
+                        hareskip_exact_target,
+                    ],
+                    outputs=[
+                        hareskip_window_start,
+                        hareskip_window_end,
+                        hareskip_estimate_md,
+                    ],
+                )
+                hareskip_zone_range.change(
+                    fn=_hareskip_zone_range_updates,
+                    inputs=[
+                        hareskip_zone_range,
+                        hareskip_aggressiveness,
+                        hareskip_window_start,
+                        hareskip_window_end,
+                        hareskip_streak_danger,
+                        hareskip_streak_middle,
+                        hareskip_streak_safe,
+                        hareskip_probability_model,
+                        hareskip_exact_target,
+                    ],
+                    outputs=[
+                        hareskip_zone_low,
+                        hareskip_zone_high,
+                        hareskip_estimate_md,
+                    ],
+                )
+            else:
+                # Fallback path: the window/zone components are plain
+                # Sliders, so they carry the generic handler themselves.
+                for _hare_slider in (
+                    hareskip_window_start,
+                    hareskip_window_end,
+                    hareskip_zone_low,
+                    hareskip_zone_high,
+                ):
+                    _hare_slider.release(
+                        fn=_hareskip_estimate_updates,
+                        inputs=_hare_estimate_inputs,
+                        outputs=[hareskip_estimate_md],
+                    )
 
         return [
             enabled,
@@ -1563,35 +1651,208 @@ def _hareskip_mode_group_updates(skip_mode: str):
     )
 
 
-def _format_hareskip_estimate(aggressiveness) -> str:
-    """Static per-aggressiveness summary of the skip-probability band.
+# Deterministic seed ladder for the UI skip-count estimate: seed_i =
+# _HARE_ESTIMATE_SEED_BASE + i * _HARE_ESTIMATE_SEED_STRIDE. Fixed so the same
+# settings always render the same number (no flicker between redraws). 32
+# draws cost ~1.7 ms, cheap enough for a slider .release handler.
+_HARE_ESTIMATE_SEEDS = 32
+_HARE_ESTIMATE_SEED_BASE = 1
+_HARE_ESTIMATE_SEED_STRIDE = 7919
 
-    Renders p_cap and the sigmoid band centre from the pure probability model
-    (no schedule, so no per-run skip count). Wrapped in a broad try/except so a
-    UI callback can never raise; falls back to a neutral hint.
+
+def _estimate_skip_count(
+    aggressiveness,
+    window,
+    zones,
+    streaks,
+    model_name,
+    exact_target=0,
+) -> float:
+    """Mean skip count over the reference schedule for the given settings.
+
+    Monte Carlo over ``_HARE_ESTIMATE_SEEDS`` deterministic seeds against
+    ``reference_schedule.REFERENCE_T_NOW`` (display only — never the sampling
+    path). When ``exact_target`` is enabled the generator re-rolls until it
+    hits that count, so the answer is known without sampling and the loop is
+    short-circuited. Inputs are expected pre-normalised by the caller.
+    """
+    if exact_target > 0:
+        return float(exact_target)
+    total = 0
+    for i in range(_HARE_ESTIMATE_SEEDS):
+        seed = _HARE_ESTIMATE_SEED_BASE + i * _HARE_ESTIMATE_SEED_STRIDE
+        pattern = generate_skip_pattern(
+            REFERENCE_T_NOW,
+            aggressiveness,
+            seed,
+            probability_model=model_name,
+            skip_window=window,
+            zone_boundaries=zones,
+            zone_max_streak=streaks,
+        )
+        total += pattern.skip_count
+    return total / float(_HARE_ESTIMATE_SEEDS)
+
+
+def _format_hareskip_estimate(
+    aggressiveness=0.5,
+    window_start=0.05,
+    window_end=0.95,
+    zone_low=-4.0,
+    zone_high=0.0,
+    streak_danger=1,
+    streak_middle=2,
+    streak_safe=3,
+    model_name=DEFAULT_PROBABILITY_MODEL,
+    exact_target=0,
+) -> str:
+    """Two-line Markdown summary: estimated skip count plus model parameters.
+
+    Raw UI values are normalised with the same helpers ``RuntimeState`` uses,
+    so a reversed window, a blank Number or an unknown model name renders a
+    sane figure instead of raising. Wrapped in a broad try/except so a UI
+    callback can never propagate an exception.
     """
     try:
-        from .probability_models import DEFAULT_PROBABILITY_MODEL, get_model
+        from .probability_models import get_model
 
-        model = get_model(DEFAULT_PROBABILITY_MODEL)
-        params = model.params_from_aggressiveness(float(aggressiveness))
+        aggressiveness = _clamp_float(aggressiveness, 0.0, 1.0)
+        window = _normalize_range(
+            window_start, window_end, 0.0, 1.0, 0.05, 0.95
+        )
+        zones = _normalize_range(zone_low, zone_high, -8.0, 8.0, -4.0, 0.0)
+        streaks = {
+            "danger": _clamp_int_default(streak_danger, 0, 10, 1),
+            "middle": _clamp_int_default(streak_middle, 0, 10, 2),
+            "safe": _clamp_int_default(streak_safe, 0, 10, 3),
+        }
+        exact_target = _clamp_int_default(exact_target, 0, 999, 0)
+        if model_name not in PROBABILITY_MODELS:
+            model_name = DEFAULT_PROBABILITY_MODEL
+
+        mean = _estimate_skip_count(
+            aggressiveness, window, zones, streaks, model_name, exact_target
+        )
+        count = int(round(mean))
+        pct = int(round(100.0 * count / REFERENCE_NUM_STEPS))
+        basis = (
+            "exact target"
+            if exact_target > 0
+            else f"{_HARE_ESTIMATE_SEEDS}シード平均"
+        )
+        headline = (
+            f"**≈{count} skips / {REFERENCE_NUM_STEPS} steps** "
+            f"（約{pct}%時短、"
+            f"{REFERENCE_SCHEDULE_LABEL} 基準・{basis}）"
+        )
+
+        params = get_model(model_name).params_from_aggressiveness(aggressiveness)
         summary = (
-            "`p_cap="
-            f"{params['p_cap']:.2f}"
+            f"`model={model_name}"
+            f" p_cap={params['p_cap']:.2f}"
             f" z_enter={params['z_enter']:.2f}"
+            f" tau_enter={params['tau_enter']:.2f}"
         )
         # The default monotone model has no falling edge, hence no z_exit.
         z_exit = params.get("z_exit")
         if z_exit is not None:
             summary += f" z_exit={z_exit:.2f}"
-        return (
-            summary + "`"
-            " — higher aggressiveness widens/raises the skip band."
-        )
+        return headline + "\n\n" + summary + "`"
     except Exception:
-        return "`skip band summary unavailable`"
+        return "`skip estimate unavailable`"
 
 
-def _hareskip_estimate_updates(aggressiveness):
-    return gr.update(value=_format_hareskip_estimate(aggressiveness))
+def _hareskip_estimate_updates(
+    aggressiveness,
+    window_start,
+    window_end,
+    zone_low,
+    zone_high,
+    streak_danger,
+    streak_middle,
+    streak_safe,
+    model_name,
+    exact_target,
+):
+    return gr.update(
+        value=_format_hareskip_estimate(
+            aggressiveness,
+            window_start,
+            window_end,
+            zone_low,
+            zone_high,
+            streak_danger,
+            streak_middle,
+            streak_safe,
+            model_name,
+            exact_target,
+        )
+    )
+
+
+def _hareskip_window_range_updates(
+    range_value,
+    aggressiveness,
+    zone_low,
+    zone_high,
+    streak_danger,
+    streak_middle,
+    streak_safe,
+    model_name,
+    exact_target,
+):
+    """Mirror the dual-thumb window RangeSlider into the hidden Numbers.
+
+    Also returns the refreshed estimate directly rather than relying on the
+    hidden gr.Number .change events re-firing (belt and braces: the mirrors
+    are not user-visible controls).
+    """
+    start, end = range_value[0], range_value[1]
+    return (
+        start,
+        end,
+        _hareskip_estimate_updates(
+            aggressiveness,
+            start,
+            end,
+            zone_low,
+            zone_high,
+            streak_danger,
+            streak_middle,
+            streak_safe,
+            model_name,
+            exact_target,
+        ),
+    )
+
+
+def _hareskip_zone_range_updates(
+    range_value,
+    aggressiveness,
+    window_start,
+    window_end,
+    streak_danger,
+    streak_middle,
+    streak_safe,
+    model_name,
+    exact_target,
+):
+    """Mirror the dual-thumb zone RangeSlider into the hidden Numbers."""
+    low, high = range_value[0], range_value[1]
+    return (
+        low,
+        high,
+        _hareskip_estimate_updates(
+            aggressiveness,
+            window_start,
+            window_end,
+            low,
+            high,
+            streak_danger,
+            streak_middle,
+            streak_safe,
+            model_name,
+            exact_target,
+        ),
+    )
 

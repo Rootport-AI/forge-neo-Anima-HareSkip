@@ -29,6 +29,11 @@ def _install_gradio_stub() -> None:
         def change(self, *args, **kwargs):
             return None
 
+        # gradio Sliders expose .release (fires once on mouse-up); the
+        # estimate wiring uses it so dragging does not re-run the Monte
+        # Carlo per pixel. Same no-op contract as .change for the stub.
+        release = change
+
     for name in (
         "Accordion",
         "Checkbox",
