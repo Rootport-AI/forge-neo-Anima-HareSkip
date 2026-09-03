@@ -77,6 +77,8 @@ top-K の deterministic 選択、prompt/seed 過適合、軽量 NN 生成は不�
 
 判定側と加工側は **slot dict 契約**（`_hareskip_slot`）のみで連結する。判定側 write: `previous_modulated_input` / `accumulated_rel_l1_distance` / `should_calc`。加工側 read: `previous_residual` / `residual_history` / `velocity_ema` / `acceleration_ema`。これが 3 名前空間分割の自然な継ぎ目。
 
+**ResRefine 外挿の時間軸（2026-09-03〜）**: Linear / Taylor2 の外挿（Lagrange 補間・EMA 速度・EMA 加速度・`dt_pred`）の x 軸は **ステップ番号ではなく実時間 `tau = 1 - t_now`**。Beta 系スケジューラの `t_now` 歩幅は一様でない（序盤 0.005 前後、中盤 0.065 前後）ため、番号あたりの傾きは実時間あたりの傾きの偏った推定になっていた。`t_now` は生成が進むと減少する（0.999→0.007）ので、単調増加する `tau` に一度だけ変換して全予測経路で共有する（`dt > 0` が前進を意味する既存ガードがそのまま活きる）。`t_now` は `_capture_timestep_value(timesteps_B_T, start, end)` で毎モデル呼び出しに読み、`residual_history` の各要素に `tau` として記録する（`step_index` は診断用に残置）。読み取れなかった場合（`None`）は外挿せず Reuse にフォールバックする。**Reuse 経路と 3 モードのスキップ判定は不変** — 変わるのは Linear / Taylor2 / EMA 選択時の予測値のみ。
+
 ### 3.2 forward パッチとモードディスパッチ
 
 - `hareskip/patcher.py` が `backend.nn.anima.Anima._forward` / `.forward` を monkey patch。DiT forward 全体（embed → t_embedder → blocks ループ → final_layer → unpatchify）を再実装し、blocks ループをスキップ可能化する。

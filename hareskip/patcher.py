@@ -403,7 +403,12 @@ def _hareskip_forward_body(
                 end,
             )
             item["previous_residual"] = residual_slice
-            _resrefine_record_residual(item, step_index, residual_slice)
+            _resrefine_record_residual(
+                item,
+                step_index,
+                residual_slice,
+                _capture_timestep_value(timesteps_B_T, start, end),
+            )
             item["accumulated_rel_l1_distance"] = 0.0
             item["should_calc"] = True
         cache["skip_streak"] = 0
@@ -441,6 +446,7 @@ def _hareskip_forward_body(
                 batch_per_slot,
                 step_index,
                 progress,
+                timesteps_B_T,
             )
         )
         cache["skip_streak"] = skip_streak
@@ -874,6 +880,7 @@ def _resrefine_apply_residual(
     batch_per_slot: int,
     step_index: int,
     progress: float,
+    timesteps: Any = None,
 ) -> tuple[
     dict[int, str],
     dict[int, str | None],
@@ -899,6 +906,9 @@ def _resrefine_apply_residual(
             step_index,
             skip_streak,
             late_phase,
+            # This step's flow time, read from the same tensor the recording
+            # path uses, so predictor and history share one time axis.
+            _capture_timestep_value(timesteps, start, end),
         )
         x[start:end] = target_slice + residual.to(x.device)
         slot_actions[key] = action
@@ -956,6 +966,13 @@ def _capture_calibration_pair(
 
 
 def _capture_timestep_value(timesteps: Any, start: int, end: int) -> float | None:
+    """This slot's flow time t_now, or None when it cannot be read.
+
+    Besides calibration capture this now feeds ResRefine's extrapolation time
+    axis (see ``hareskip/resrefine.py``), so it runs on every model call.
+    Returning None is safe: ResRefine then falls back to plain residual reuse
+    instead of extrapolating against an unknown time.
+    """
     try:
         value = timesteps
         if hasattr(value, "ndim") and getattr(value, "ndim", 0) >= 1:
