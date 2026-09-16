@@ -18,7 +18,7 @@ from .auto_teacache import (
     apply_auto_teacache_row_to_state,
     parse_auto_teacache_csv,
 )
-from .callbacks import register_callbacks
+from .callbacks import CORE_COMPONENTS, register_callbacks
 from .constants import (
     EXPECTED_UI_ARG_COUNT,
     HARESKIP_MODES,
@@ -44,6 +44,7 @@ from .probability_models import (
     METHOD_VERSION,
     PROBABILITY_MODELS,
 )
+from .recommended_settings import lookup_recommendation
 from .reference_schedule import (
     REFERENCE_NUM_STEPS,
     REFERENCE_SCHEDULE_LABEL,
@@ -321,11 +322,21 @@ class Script(scripts.Script):
                 open=False,
                 elem_id="resrefine-panel",
             ):
+                resrefine_load_recommended = gr.Button(
+                    "Load recommended settings",
+                    elem_id="resrefine-load-recommended",
+                )
                 resrefine_formula = gr.Dropdown(
                     label="Prediction formula",
                     choices=RESREFINE_FORMULAS,
                     value=RESREFINE_FORMULA_REUSE,
                     elem_id="resrefine-formula",
+                )
+                resrefine_recommend_status = gr.Markdown(
+                    "Reads the current sampler/scheduler/steps and applies "
+                    "calibrated values (Euler families only; others fall "
+                    "back to Reuse). Re-click after changing the sampler.",
+                    elem_id="resrefine-recommend-status",
                 )
                 resrefine_use_prediction_after_progress = gr.Slider(
                     label="Use prediction after progress",
@@ -485,6 +496,47 @@ class Script(scripts.Script):
                     resrefine_curve_ema_smoothing,
                 ],
             )
+            # --- "Load recommended settings" button --------------------
+            # Reads the *current tab's* three sampler/scheduler/steps core
+            # components (captured by hareskip.callbacks.on_after_component
+            # into CORE_COMPONENTS at UI build time) and rewrites the
+            # ResRefine formula + slider values to the calibrated
+            # recommendation for that (sampler, scheduler) pair. No hidden
+            # resolution happens at generation time — this is purely a
+            # one-shot UI convenience (see recommended_settings.py).
+            _hareskip_tab_prefix = "img2img" if is_img2img else "txt2img"
+            _hareskip_core_keys = (
+                f"{_hareskip_tab_prefix}_sampling",
+                f"{_hareskip_tab_prefix}_scheduler",
+                f"{_hareskip_tab_prefix}_steps",
+            )
+            if all(key in CORE_COMPONENTS for key in _hareskip_core_keys):
+                # Only this tab's three keys are checked. At txt2img ui()
+                # build time img2img_* is not captured yet (and vice versa)
+                # — that is expected, not a failure; do not wait for all six
+                # keys across both tabs.
+                resrefine_load_recommended.click(
+                    fn=_hareskip_apply_recommended_ui,
+                    inputs=[CORE_COMPONENTS[key] for key in _hareskip_core_keys],
+                    outputs=[
+                        resrefine_formula,
+                        resrefine_prediction_strength,
+                        resrefine_slope_ema_smoothing,
+                        resrefine_use_prediction_after_progress,
+                        resrefine_apply_prediction_from_skip,
+                        resrefine_taylor2_curve_strength,
+                        resrefine_curve_ema_smoothing,
+                        resrefine_recommend_status,
+                    ],
+                )
+            else:
+                resrefine_load_recommended.interactive = False
+                resrefine_recommend_status.value = (
+                    "Sampler/scheduler/steps controls were not captured for "
+                    "this tab, so this button is disabled. Check Settings "
+                    "-> User interface -> Parameter order and make sure "
+                    "'sampler' comes before 'scripts'."
+                )
             enabled.change(
                 fn=_hareskip_enable_updates,
                 inputs=[enabled],
@@ -1612,6 +1664,12 @@ def _hareskip_profile_change_updates(profile: str):
 
 
 def _hareskip_prediction_control_updates(formula: str, slope_ema_smoothing: float):
+    # WARNING: never add `value=` to the gr.update() calls returned below.
+    # resrefine_slope_ema_smoothing is itself one of this handler's own
+    # `outputs` (it is also one of the `inputs`), so returning a value for
+    # it here would make its own .change fire again on every call — an
+    # infinite self-loop. Interactive-only updates are safe because they
+    # don't re-trigger .change.
     uses_prediction = formula in (RESREFINE_FORMULA_LINEAR, RESREFINE_FORMULA_TAYLOR2)
     uses_taylor = formula == RESREFINE_FORMULA_TAYLOR2
     try:
@@ -1625,6 +1683,127 @@ def _hareskip_prediction_control_updates(formula: str, slope_ema_smoothing: floa
         gr.update(interactive=uses_taylor),
         gr.update(interactive=uses_prediction),
         gr.update(interactive=uses_taylor and slope > 0.0),
+    )
+
+
+def _unwrap_interactive(update) -> bool:
+    """Pull the raw ``interactive`` bool out of a ``gr.update(...)`` result.
+
+    ``_hareskip_prediction_control_updates`` returns ``gr.update(...)``
+    objects (real gradio: a dict of the passed kwargs). Unwrapping here lets
+    ``_resolve_recommendation`` reuse that helper's actual call (no copied
+    interactivity logic) while still handing back plain booleans for
+    gradio-independent callers/tests.
+    """
+    if isinstance(update, dict):
+        return bool(update.get("interactive"))
+    return bool(getattr(update, "interactive", False))
+
+
+def _resolve_recommendation(sampler: str, scheduler: str, steps: int) -> dict:
+    """Gradio-independent resolution for the "Load recommended settings" button.
+
+    Looks up ``(sampler, scheduler)`` in the recommended-settings table and
+    returns a plain dict describing what should be applied:
+
+    - ``formula``: the ResRefine formula value to set.
+    - ``prediction_strength`` / ``slope_ema_smoothing`` /
+      ``use_prediction_after_progress`` / ``apply_prediction_from_skip``:
+      the values to set when there is a calibrated hit; ``None`` on a miss
+      (meaning "leave the slider's current value alone" — Reuse does not
+      use these controls, and a miss should not clobber whatever the user
+      had set while experimenting).
+    - ``interactive``: the 6-tuple of booleans from
+      ``_hareskip_prediction_control_updates`` for the resolved formula, so
+      interactivity is always computed by that single existing helper
+      rather than duplicated here.
+    - ``status``: the Markdown status line to show.
+    - ``hit``: whether a calibrated row was found.
+    """
+    row = lookup_recommendation(sampler, scheduler, steps)
+    if row is None:
+        interactive = tuple(
+            _unwrap_interactive(update)
+            for update in _hareskip_prediction_control_updates(
+                RESREFINE_FORMULA_REUSE, 0.0
+            )
+        )
+        return {
+            "formula": RESREFINE_FORMULA_REUSE,
+            "prediction_strength": None,
+            "slope_ema_smoothing": None,
+            "use_prediction_after_progress": None,
+            "apply_prediction_from_skip": None,
+            "interactive": interactive,
+            "status": (
+                f"No calibrated entry for **{sampler} + {scheduler}** — "
+                "applied Reuse (residual only), the safe default."
+            ),
+            "hit": False,
+        }
+
+    interactive = tuple(
+        _unwrap_interactive(update)
+        for update in _hareskip_prediction_control_updates(
+            row["formula"], row["slope_ema_smoothing"]
+        )
+    )
+    status = (
+        f"**{sampler} + {scheduler}** ({steps} steps) -> "
+        f"{row['formula']} (strength {row['prediction_strength']:.2f}, "
+        f"EMA smoothing {row['slope_ema_smoothing']:.2f}) — calibrated at "
+        f"{row['apply_prediction_from_skip']} skips / {steps} steps"
+    )
+    return {
+        "formula": row["formula"],
+        "prediction_strength": row["prediction_strength"],
+        "slope_ema_smoothing": row["slope_ema_smoothing"],
+        "use_prediction_after_progress": row["use_prediction_after_progress"],
+        "apply_prediction_from_skip": row["apply_prediction_from_skip"],
+        "interactive": interactive,
+        "status": status,
+        "hit": True,
+    }
+
+
+def _hareskip_apply_recommended_ui(sampler: str, scheduler: str, steps: int):
+    """gradio-facing wrapper around ``_resolve_recommendation``.
+
+    Returns 9 outputs in this fixed order: formula value; prediction_strength
+    value+interactive; slope_ema_smoothing value+interactive;
+    use_prediction_after_progress value+interactive;
+    apply_prediction_from_skip value+interactive; taylor2_curve_strength
+    interactive-only (Linear never touches its value); curve_ema_smoothing
+    interactive-only (same reason); status Markdown text.
+    """
+    resolved = _resolve_recommendation(sampler, scheduler, steps)
+    (
+        use_after_interactive,
+        apply_from_interactive,
+        strength_interactive,
+        taylor2_interactive,
+        slope_ema_interactive,
+        curve_ema_interactive,
+    ) = resolved["interactive"]
+
+    def _value_update(value, interactive):
+        if value is None:
+            return gr.update(interactive=interactive)
+        return gr.update(value=value, interactive=interactive)
+
+    return (
+        gr.update(value=resolved["formula"]),
+        _value_update(resolved["prediction_strength"], strength_interactive),
+        _value_update(resolved["slope_ema_smoothing"], slope_ema_interactive),
+        _value_update(
+            resolved["use_prediction_after_progress"], use_after_interactive
+        ),
+        _value_update(
+            resolved["apply_prediction_from_skip"], apply_from_interactive
+        ),
+        gr.update(interactive=taylor2_interactive),
+        gr.update(interactive=curve_ema_interactive),
+        gr.update(value=resolved["status"]),
     )
 
 

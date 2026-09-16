@@ -26,6 +26,17 @@ def _install_gradio_stub() -> None:
         def __init__(self, *args, **kwargs):
             pass
 
+        # hareskip/script.py's ui() nests most of its layout in
+        # ``with gr.Accordion(...):`` / ``with gr.Group(...):`` blocks. The
+        # real gradio components support the context-manager protocol; the
+        # stub needs the same so ui() can actually run under test (used by
+        # the ui() smoke test in test_recommended_settings.py).
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
         def change(self, *args, **kwargs):
             return None
 
@@ -33,6 +44,11 @@ def _install_gradio_stub() -> None:
         # estimate wiring uses it so dragging does not re-run the Monte
         # Carlo per pixel. Same no-op contract as .change for the stub.
         release = change
+
+        # gradio Buttons expose .click instead of .change; same no-op
+        # contract — the "Load recommended settings" button wiring in
+        # hareskip/script.py just needs the call to not raise.
+        click = change
 
     for name in (
         "Accordion",
@@ -45,11 +61,20 @@ def _install_gradio_stub() -> None:
         "HTML",
         "Dropdown",
         "Textbox",
+        "Button",
     ):
         setattr(gr, name, _Component)
 
     def _update(*args, **kwargs):
-        return None
+        # Real gradio's gr.update(**kwargs) returns the kwargs as a dict
+        # (plus an internal "__type__" marker) rather than applying them
+        # immediately. Mirroring that (instead of returning None) lets
+        # gradio-independent helpers that call other update-returning
+        # helpers (e.g. hareskip.script._resolve_recommendation calling
+        # _hareskip_prediction_control_updates) unwrap the result and expose
+        # raw values for assertions, without any test relying on a bare
+        # None return.
+        return dict(kwargs)
 
     gr.update = _update
     sys.modules["gradio"] = gr

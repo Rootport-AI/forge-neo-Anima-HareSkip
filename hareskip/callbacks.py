@@ -13,6 +13,47 @@ from .timing import step_end, step_start
 
 _registered = False
 
+# Core (non-HareSkip) Forge components captured for the "Load recommended
+# settings" button, keyed by elem_id. Populated by on_after_component below
+# as the main txt2img/img2img UI is built; the recommended-settings button
+# reads from this registry at ui() time rather than owning its own capture
+# callback, mirroring ControlNet's on_after_component + elem_id filter
+# approach (controlnet.py:611,946 in the Forge codebase).
+CORE_COMPONENTS: dict[str, object] = {}
+
+_CORE_COMPONENT_ELEM_IDS = (
+    "txt2img_sampling",
+    "txt2img_scheduler",
+    "txt2img_steps",
+    "img2img_sampling",
+    "img2img_scheduler",
+    "img2img_steps",
+)
+
+
+def on_after_component(component, **kwargs) -> None:
+    try:
+        elem_id = getattr(component, "elem_id", None) or kwargs.get("elem_id")
+        if elem_id in _CORE_COMPONENT_ELEM_IDS:
+            CORE_COMPONENTS[elem_id] = component
+    except Exception:
+        exception("on_after_component capture failed")
+
+
+def _reset_for_reload() -> None:
+    """Undo register_callbacks()'s registration state ahead of a Reload UI.
+
+    Reload UI clears every previously registered script_callbacks callback,
+    but the ``_registered`` guard above (and CORE_COMPONENTS) survive because
+    this module stays cached in sys.modules — so without this reset,
+    register_callbacks() would see ``_registered`` already True post-reload
+    and skip re-registering everything, silently going dark. This mirrors
+    ControlNet's on_before_reload(reset) (controlnet.py:612).
+    """
+    global _registered
+    _registered = False
+    CORE_COMPONENTS.clear()
+
 
 def register_callbacks() -> None:
     global _registered
@@ -26,6 +67,10 @@ def register_callbacks() -> None:
         script_callbacks.on_cfg_denoiser(on_cfg_denoiser)
         script_callbacks.on_cfg_after_cfg(on_cfg_after_cfg)
         script_callbacks.on_script_unloaded(on_script_unloaded)
+        script_callbacks.on_after_component(
+            on_after_component, name="hareskip-core-capture"
+        )
+        script_callbacks.on_before_reload(_reset_for_reload)
         _registered = True
         info(f"callbacks registered version={__version__}")
     except Exception:
