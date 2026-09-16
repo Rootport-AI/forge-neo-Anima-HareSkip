@@ -1,0 +1,51 @@
+{
+  "description": "ResRefine \"Load recommended settings\" button lookup table (hareskip/recommended_settings.py:RECOMMENDED_SETTINGS). Matching is exact-string (sampler, scheduler); no entry means the button falls back to Reuse (residual only). use_prediction_after_progress and apply_prediction_from_skip are included in every row because the calibration campaign held both fixed for the whole campaign (STAGE5-SCAN1-HANDOFF §1) — the button reproduces the calibrated condition exactly, not just formula/strength/smoothing.",
+  "source_module": "hareskip/recommended_settings.py",
+  "calibration_campaign": "第5段階応答曲面キャコヘーン（stage-5 response-surface campaign）, 2026-09-05 - 2026-09-14",
+  "calibration_dataset": "https://huggingface.co/datasets/Rootport/HareSkip-calibration",
+  "count": 2,
+  "rows": [
+    {
+      "sampler": "Euler",
+      "scheduler": "Beta",
+      "formula": "Linear extrapolation",
+      "prediction_strength": 0.30,
+      "slope_ema_smoothing": 0.10,
+      "use_prediction_after_progress": 0.0,
+      "apply_prediction_from_skip": 2,
+      "calibration": {
+        "fixed_point": "15 skips / 30 steps",
+        "effect": "+22% anchor",
+        "p_value": 0.015,
+        "confirmation": "6/6 improved on unseen V1 prompts"
+      }
+    },
+    {
+      "sampler": "Euler",
+      "scheduler": "Simple",
+      "formula": "Linear extrapolation",
+      "prediction_strength": 0.30,
+      "slope_ema_smoothing": 0.00,
+      "use_prediction_after_progress": 0.0,
+      "apply_prediction_from_skip": 2,
+      "calibration": {
+        "fixed_point": "average-baseline common point (same campaign)",
+        "effect": null,
+        "p_value": 0.055,
+        "confirmation": "borderline significance — weaker evidence than Euler+Beta, kept as the best available default for this pair"
+      }
+    }
+  ],
+  "known_limitations": [
+    "Calibrated at N=15 skips / 30 steps only — no per-step-count or per-skip-count band exists yet (a future \"skip_band\" column was considered and deliberately left out as premature/YAGNI; each row is a plain dict so adding one later is a one-line change, not a schema migration).",
+    "One-shot resolution only: the button reads the host UI's sampler/scheduler/steps once, at click time. If you change the host sampler/scheduler afterwards, the extension does not notice — click the button again to re-resolve.",
+    "Matching is exact-string and case-sensitive on the sampler/scheduler display names (e.g. \"Euler a\" never matches the \"Euler\" row).",
+    "The button can be disabled entirely if the host's sampler/scheduler/steps controls were not captured for the current tab — this happens when Settings -> User interface -> Parameter order has been changed so that 'scripts' is ordered before 'sampler' (the capture callback runs at UI-build time and needs the host controls to already exist)."
+  ],
+  "how_to_add_a_row": [
+    "Add a dict to RECOMMENDED_SETTINGS in hareskip/recommended_settings.py with the same keys as the existing rows; import the formula constant from hareskip.state (RESREFINE_FORMULA_LINEAR / _TAYLOR2 / _REUSE) rather than using a string literal.",
+    "Document the calibration source for the new row in that module's docstring (campaign name/date range and the relevant statistic).",
+    "Update this JSON file and RECOMMENDED-SETTINGS.md with the same row.",
+    "Add a case to tests/test_recommended_settings.py covering the new (sampler, scheduler) lookup."
+  ]
+}

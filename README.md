@@ -24,6 +24,8 @@ Whichever mode decides *that* a step is skipped, **ResRefine** decides what valu
 
 Linear/Taylor2 predictions are smoothed with EMA (`resrefine_slope_ema_smoothing` / `resrefine_curve_ema_smoothing`), gated by a "use prediction after progress" threshold and an "apply prediction from skip #" threshold, and validated against a max-norm-ratio guard before being applied; on any failure ResRefine falls back to plain reuse.
 
+A **"Load recommended settings"** button sits directly above the formula dropdown. It reads the host UI's current sampler/scheduler/step count for the active tab and, on a calibrated match, rewrites the formula dropdown and slider values to that pair's recommended settings; on no match it applies `Reuse (residual only)` (the safe default) and leaves the sliders alone. This is a one-shot, fully WYSIWYG UI convenience — nothing is resolved automatically at generation time, and the extension does not notice if you change the sampler/scheduler afterwards (click the button again to re-resolve). See [`docs/RECOMMENDED-SETTINGS.md`](docs/RECOMMENDED-SETTINGS.md) for the calibrated table, calibration sources, and known limitations.
+
 ## Aggressiveness Slider and Skip Seed Offset
 
 In HareSkip mode, `a` (0.0–1.0, default 0.5) controls how much of the trajectory is skip-eligible and how high the skip probability rises there — it is *not* a direct skip-count dial. Because the pattern is stochastic, the same `a` and the same image seed can still draw a different pattern via the **skip seed offset**: a small reproducible "gacha re-roll" integer. The skip sampler seed is derived deterministically as `sha256(f"{image_seed}|hareskip|{offset}") mod 2**63` (never the builtin `hash()`, which is per-process salted and would break reproducibility). Same image seed + same offset always reproduces the same skip pattern; changing the offset re-rolls a new one without touching the image seed.
@@ -78,6 +80,7 @@ Forge Neo can cache Gradio UI component defaults (slider ranges, default values,
 
 - [HareSkip design spec](docs/HareSkip-design.md) — canonical stochastic skip-density design (imported from the pre-study archive)
 - [ResRefine EMA notes](docs/ResRefine-EMA-notes.md)
+- [Recommended settings table](docs/RECOMMENDED-SETTINGS.md) ("Load recommended settings" button, ResRefine)
 - [Coefficient profile presets](docs/PRESET-COEFFICIENTS.md) (TeaCache mode)
 - [Calibration results](docs/archive/CALIBRATION-RESULTS.md) (TeaCache mode, archived historical material)
 - Archived pre-fork specs: [`docs/archive/`](docs/archive/)
