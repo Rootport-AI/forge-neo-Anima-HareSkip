@@ -75,6 +75,8 @@ Forge Neo can cache Gradio UI component defaults (slider ranges, default values,
 - Target: StabilityMatrix Forge Neo / SD WebUI Forge Neo
 - Primary workflow: txt2img with Anima / Cosmos-Predict2 T2I models
 - Not guaranteed: A1111 mainline, Forge classic, ComfyUI, multi-GPU, heavily modified pipelines
+- Verified version: the calibration experiments and on-device checks up to extension commit `7424841` were run on Forge neo [`b6164214`](https://github.com/Haoming02/sd-webui-forge-classic/tree/b61642140acb7c2f1c65c5d0f2ab961b7366c02e) (upstream [`Haoming02/sd-webui-forge-classic`](https://github.com/Haoming02/sd-webui-forge-classic), branch `neo`, commit-pinned link).
+- Known issue: on a separate environment running a 2026-10 build of Forge neo, the default HareSkip mode was observed to fall back to full computation (no steps skipped). The cause is under investigation. Manual Skip mode works there. To check whether you are affected, look for the console line `hareskip_schedule_unavailable`.
 
 ## Documentation
 

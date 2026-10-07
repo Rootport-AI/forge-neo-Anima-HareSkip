@@ -411,9 +411,17 @@ Shift スポットチェックの結果は、SPEC-alpha に「将来課題」と
 
 （ハッシュはラボノート記載どおりの先頭・末尾表記である。完全な 64 桁は各 manifest ファイルに記録されている。）
 
-### 8.4 画像の公開予定
+**（2026-10-07 追補）固定環境の来歴**
 
-生成した全画像（基準・候補・アンカー・Shift チェック・第3段階）は、HuggingFace Dataset として公開する予定である。**リポジトリはまだ作成されていない**。公開の際は、固定コミット・条件マトリクス・パターン正典・infotext の実現値をあわせて配布することで、本レポートの数値が第三者に再現可能になる。
+- **上流リポジトリ**: [`Haoming02/sd-webui-forge-classic`](https://github.com/Haoming02/sd-webui-forge-classic)、branch `neo`。上記の固定コミットは [`b61642140acb7c2f1c65c5d0f2ab961b7366c02e`](https://github.com/Haoming02/sd-webui-forge-classic/tree/b61642140acb7c2f1c65c5d0f2ab961b7366c02e) である（neo ブランチはその後も進んでいるため、コミット固定の URL を示す）。
+- **拡張（HareSkip）のコミット**: 第1段階の再生成から第3段階・Shift スポットチェックまで（2026-07-18〜07-28）は `068686d055de10f748d9cd09b8c4c78ae726a90a` である。**当時の manifest にはこのコミットの記録がなく、事後に復元した**。復元は HEAD を基準としたもので、作業ツリーに未コミットの変更があったかどうかは記録がなく、確認できない。なお、基準画像・StepAnchor・Shift 基準は拡張を無効にして生成している。
+- **実行環境の詳細**（Python・PyTorch・GPU・注意機構・起動引数など）: HuggingFace データセットの `provenance/PROVENANCE.md` §8 を参照（<https://huggingface.co/datasets/Rootport/HareSkip-calibration>）。
+
+### 8.4 画像の公開（2026-10-07 追補）
+
+生成した全画像（基準・候補・アンカー・Shift チェック・第3段階）は、HuggingFace Dataset として公開済みである。公開先: <https://huggingface.co/datasets/Rootport/HareSkip-calibration>
+
+本節は当初「HuggingFace Dataset として公開する予定である。リポジトリはまだ作成されていない」と記していたが、上記のとおり更新した。公開にあたっては、固定コミット・条件マトリクス・パターン正典・infotext の実現値をあわせて配布することで、本レポートの数値が第三者に再現可能になる。
 
 ---
 
